@@ -38,11 +38,11 @@ from pathlib import Path
 from django.conf import settings
 from . import providers, agents_registry, jobs
 from .dom_inventory import count_elements as _count_elements
+from .skill_paths import skill_script, missing_hint
 
-SKILLS = Path.home() / ".claude/skills/pixel-clone/scripts"
-CAPTURE = SKILLS / "capture.py"
-TOKENS = SKILLS / "extract_tokens.py"
-ROUTEMAP = SKILLS / "route_map.py"
+CAPTURE = skill_script("pixel-clone/scripts/capture.py")
+TOKENS = skill_script("pixel-clone/scripts/extract_tokens.py")
+ROUTEMAP = skill_script("pixel-clone/scripts/route_map.py")
 
 CAPTURE_TIMEOUT = 240
 STEP_TIMEOUT = 120
@@ -256,7 +256,7 @@ def run(job: dict, answers: dict, log) -> dict:
     log("ok", f"Phase 1 · target {url} reachable & localhost-sandboxed ✓")
 
     if not CAPTURE.exists():
-        return {"ok": False, "reason": "pixel-clone scripts not found"}
+        return {"ok": False, "reason": missing_hint("pixel-clone/scripts/capture.py")}
 
     # Phase 2 — capture
     vp = {"Desktop only (1280×800)": "1280x800", "Desktop + Mobile": "1280x800,375x812"}.get(
@@ -264,8 +264,14 @@ def run(job: dict, answers: dict, log) -> dict:
     cap = g.root / "captures"
     cmd = [sys.executable, str(CAPTURE), "--base", url, "--out", str(cap),
            "--viewports", vp, "--full-page"]
-    if answers.get("routes", "All routes (crawl)") == "All routes (crawl)":
+    routes_mode = answers.get("routes", "All routes (crawl)")
+    if routes_mode == "All routes (crawl)":
         cmd += ["--crawl", "--depth", "2"]
+    elif answers.get("routes_list"):
+        # "Named list" / "Given pages only" were silently ignored here — with
+        # neither --crawl nor --routes, capture.py falls back to "/" and the run
+        # quietly produced a single page regardless of what the user listed.
+        cmd += ["--routes", str(answers["routes_list"]).replace(" ", "")]
     if answers.get("dynamic") == "Mask dynamic regions":
         cmd += ["--mask", ".carousel,[data-dynamic],time"]
     log("t", "$ capture.py " + url)
@@ -325,11 +331,27 @@ def run(job: dict, answers: dict, log) -> dict:
         log("info", f"Phase 5 · scaffolding React+Tailwind components via '{provider}' …")
         instruction = _default_prompt()
         tok_str = json.dumps(tokens, indent=2)[:4000]
+        # Resolve page→table BEFORE generating: whether a page is data-driven
+        # changes the prompt it gets, so it cannot be decided afterwards.
+        api_base = (answers.get("api_base") or "").strip()
+        tables = _load_service_manifest(api_base, answers.get("service_dir", ""), log) \
+            if api_base else {}
+        pre_components = [{"name": g.component_name(h.name), "source_html": str(h)}
+                          for h in htmls[: g.MAX_PAGES]]
+        api_map = _page_api_map(pre_components, cap, tables, api_base, log) if tables else {}
         for h in htmls[: g.MAX_PAGES]:
             try:
                 g.spend_call()
                 dom = _read(h)[:8000]
-                prompt = (f"{instruction}\n\nDESIGN TOKENS:\n{tok_str}\n\n"
+                name_hint = g.component_name(h.name)
+                live = api_map.get(name_hint)
+                extra = ""
+                if live:
+                    extra = (agents_registry.LIVE_DATA_PROMPT
+                             + f"\nAPI_URL = {live['url']!r}\n"
+                             + f"TABLE: {live['table']}\n"
+                             + f"COLUMNS (keys of each row object): {', '.join(live['columns'])}\n")
+                prompt = (f"{instruction}{extra}\n\nDESIGN TOKENS:\n{tok_str}\n\n"
                           f"PAGE DOM (truncated):\n{dom}\n\nReturn ONLY the component code.")
                 raw = providers.call_llm(prompt, log, json_mode=False)["text"]
                 code = g.validate_code(raw)
@@ -338,8 +360,11 @@ def run(job: dict, answers: dict, log) -> dict:
                 orig_pngs = sorted(h.parent.glob(h.stem + "__*.png"))
                 components.append({"name": name, "file": os.path.relpath(path, g.root),
                                    "bytes": len(code), "source_html": str(h),
-                                   "source_png": str(orig_pngs[0]) if orig_pngs else None})
-                log("ok", f"  ✓ generated {name}.jsx ({len(code)} bytes)")
+                                   "source_png": str(orig_pngs[0]) if orig_pngs else None,
+                                   "live_table": (live or {}).get("table"),
+                                   "api_url": (live or {}).get("url")})
+                log("ok", f"  ✓ generated {name}.jsx ({len(code)} bytes)"
+                          + (f" — LIVE from '{live['table']}'" if live else " — static"))
             except GuardrailError as e:
                 log("err", f"  guardrail blocked a page: {e}")
                 if "budget" in str(e):
@@ -356,9 +381,12 @@ def run(job: dict, answers: dict, log) -> dict:
         try:
             preview_dir = g.root / "preview"
             preview_dir.mkdir(parents=True, exist_ok=True)
+            nav_map = _nav_map(cap, components)
+            log("m", f"Phase 6 · nav map: {len(nav_map)} route(s) rewired to clone pages")
             for comp in components:
                 jsx_path = g.root / "app" / "src" / "pages" / (comp["name"] + ".jsx")
-                page_html = _preview_html(jsx_path.read_text(), comp["name"], origin=url)
+                page_html = _preview_html(jsx_path.read_text(), comp["name"],
+                                          origin=url, nav_map=nav_map)
                 (preview_dir / f"{comp['name']}.html").write_text(page_html)
             clone_port = _serve_clone(jid, str(preview_dir))
             # Point straight at the first page instead of writing an index.html
@@ -464,22 +492,179 @@ def _rewrite_asset_urls(code: str, origin: str) -> str:
     logo both 404'd in the clone preview for exactly this reason). Point them
     at the original -- which is still running -- instead of guessing;
     deterministic, not something that needs an LLM diff-loop to discover.
-    src= only (images/media) -- href= is left alone so in-preview nav links
-    don't silently jump the user off to the original app."""
+    src= only (images/media) -- nav href= is handled separately by
+    _rewrite_nav_hrefs, which can point links at the CLONED page instead."""
     origin = origin.rstrip("/")
     return re.sub(r'\bsrc=(["\'])(/[^"\']*)\1',
                     lambda m: f'src={m.group(1)}{origin}{m.group(2)}{m.group(1)}', code)
 
 
-def _preview_html(code: str, comp_name: str, origin: str = "") -> str:
+def _load_service_manifest(api_base: str, service_dir: str, log) -> dict:
+    """Tables the legacy data service exposes, for page->endpoint matching.
+
+    Prefers the live /_meta/ endpoint (authoritative -- it reflects what the
+    service can actually serve right now) and falls back to the manifest file
+    gen_service.py wrote, so a not-yet-started service still maps."""
+    if api_base:
+        try:
+            with urllib.request.urlopen(api_base.rstrip("/") + "/api/legacy/_meta/", timeout=5) as r:
+                data = json.loads(r.read().decode("utf-8", "ignore"))
+            tables = {t["table"]: [c["name"] for c in t.get("columns", [])]
+                      for t in data.get("tables", [])}
+            if tables:
+                log("ok", f"data service reachable — {len(tables)} table(s) available ✓")
+                return tables
+        except Exception as e:
+            log("warn", f"data service at {api_base} not reachable ({type(e).__name__}) "
+                        "— falling back to its manifest file")
+    if service_dir:
+        mf = Path(service_dir) / "service_manifest.json"
+        if mf.exists():
+            try:
+                data = json.loads(mf.read_text())
+                return {t["table"]: t.get("columns", []) for t in data.get("tables", [])}
+            except Exception:
+                pass
+    return {}
+
+
+def _match_table(comp_name: str, route: str, tables: dict) -> str | None:
+    """Which legacy table backs this page.
+
+    Page names and table names rarely match exactly (Vets -> vets, OwnersFind ->
+    owners), so this walks from strictest to loosest and stops at the first hit
+    rather than guessing among several."""
+    if not tables:
+        return None
+    words = [w for w in re.split(r"(?=[A-Z])|[^A-Za-z0-9]+", comp_name + " " + route) if w]
+    cands = {w.lower() for w in words if len(w) > 2}
+    names = list(tables)
+
+    for c in cands:                                   # exact: "vets" -> vets
+        if c in tables:
+            return c
+    for c in cands:                                   # plural: "vet" -> vets
+        if c + "s" in tables:
+            return c + "s"
+        if c.endswith("s") and c[:-1] in tables:
+            return c[:-1]
+    for c in sorted(cands, key=len, reverse=True):    # substring: "ownersfind"
+        for n in names:
+            if len(c) > 3 and (c.startswith(n) or n.startswith(c)):
+                return n
+    return None
+
+
+def _page_api_map(components: list, cap: Path, tables: dict, api_base: str, log) -> dict:
+    """component name -> {"url", "table", "columns"} for pages we can back with
+    real data. Pages with no matching table stay a verbatim static rebuild."""
+    routes = {}
+    man = cap / "manifest.json"
+    if man.exists():
+        try:
+            for p in (json.loads(man.read_text()).get("pages") or []):
+                routes[p.get("slug")] = p.get("route") or "/"
+        except Exception:
+            pass
+    out = {}
+    for c in components:
+        slug = Path(c.get("source_html", "")).stem
+        table = _match_table(c["name"], routes.get(slug, ""), tables)
+        if table:
+            out[c["name"]] = {
+                "table": table,
+                "columns": tables.get(table) or [],
+                "url": f"{api_base.rstrip('/')}/api/legacy/{table}/?limit=100",
+            }
+    if out:
+        log("ok", "page→data mapping: "
+                  + ", ".join(f"{k}→{v['table']}" for k, v in out.items()) + " ✓")
+    else:
+        log("m", "no page matched a legacy table — pages stay static")
+    return out
+
+
+def _norm_route(path: str) -> str:
+    """/owners/find/?q=1#x -> /owners/find   (root stays "/")"""
+    p = path.split("?", 1)[0].split("#", 1)[0]
+    return p.rstrip("/") or "/"
+
+
+def _nav_map(cap: Path, components: list) -> dict:
+    """Original route -> the clone page that reproduces it ("OwnersFind.html").
+
+    capture.py records route/slug pairs in its manifest, and each component was
+    named off its capture's filename, so the two join on the slug."""
+    slug_to_comp = {}
+    for c in components:
+        sh = c.get("source_html")
+        if sh:
+            slug_to_comp[Path(sh).stem] = c["name"]
+    out = {}
+    man = cap / "manifest.json"
+    if man.exists():
+        try:
+            data = json.loads(man.read_text())
+        except Exception:
+            data = {}
+        for p in (data.get("pages") or []):
+            comp = slug_to_comp.get(p.get("slug"))
+            if comp and p.get("route"):
+                out[_norm_route(p["route"])] = comp + ".html"
+    return out
+
+
+def _rewrite_nav_hrefs(code: str, nav_map: dict, origin: str) -> str:
+    """Generated components inherit the ORIGINAL app's nav paths verbatim
+    (href="/owners/find"), but the preview server hosts flat per-component files
+    (OwnersFind.html) -- so every nav click 404'd (confirmed live: job_002's
+    "Find owners" link). Point each link at the cloned page when we captured
+    that route, and at the still-running original when we didn't, so a link is
+    never a dead end either way.
+
+    Absolute in-app paths only: external http(s) links and #anchors are left
+    exactly as the model wrote them."""
+    origin = origin.rstrip("/")
+
+    def fix(m):
+        q, path = m.group(1), m.group(2)
+        target = nav_map.get(_norm_route(path))
+        return f'href={q}{target}{q}' if target else f'href={q}{origin}{path}{q}'
+
+    return re.sub(r'\bhref=(["\'])(/[^"\']*)\1', fix, code)
+
+
+def _component_symbol(code: str, body: str, comp_name: str) -> str:
+    """Which symbol in the generated code is the component to mount.
+
+    Must key off an actual DECLARATION, never mere presence of the name. The
+    old test was `\\bOwnersFind\\b in body`, which reads as "this file defines
+    OwnersFind" but is true of any incidental mention -- including the
+    href="OwnersFind.html" that _rewrite_nav_hrefs now injects into the nav.
+    That mounted a name nothing declared and rendered "could not mount
+    component" on every page reachable from another page's nav.
+
+    The model names its component whatever it likes (PetClinicPage), so the
+    default export is the reliable signal, not our filename-derived guess."""
+    m = _re.search(r"export\s+default\s+(?:function\s+)?([A-Z]\w*)", code)
+    if m:
+        return m.group(1)
+    if _re.search(rf"\b(?:function|const|let|var|class)\s+{_re.escape(comp_name)}\b", body):
+        return comp_name
+    m = (_re.search(r"\bfunction\s+([A-Z]\w*)\s*\(", body)
+         or _re.search(r"\b(?:const|let|var|class)\s+([A-Z]\w*)\s*[=(]?", body))
+    return m.group(1) if m else "App"
+
+
+def _preview_html(code: str, comp_name: str, origin: str = "", nav_map: dict | None = None) -> str:
     """Wrap a generated JSX component in a runnable page (React + Babel + Tailwind
     via CDN) so it renders in a browser with no build step."""
     if origin:
         code = _rewrite_asset_urls(code, origin)
+        code = _rewrite_nav_hrefs(code, nav_map or {}, origin)
     body = _re.sub(r"^\s*import\s+.*$", "", code, flags=_re.M)
     body = body.replace("export default ", "")
-    m = _re.search(r"function\s+(\w+)\s*\(", body) or _re.search(r"const\s+(\w+)\s*=", body)
-    name = comp_name if _re.search(rf"\b{comp_name}\b", body) else (m.group(1) if m else "App")
+    name = _component_symbol(code, body, comp_name)
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>Clone · {comp_name}</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>

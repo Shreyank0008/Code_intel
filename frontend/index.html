@@ -1611,6 +1611,7 @@ const PIXEL_FORM=[
   {k:'dynamic',label:'Dynamic content handling',type:'chips',opts:['Mask dynamic regions','Seed fixed dataset','Login required']},
   {k:'visual_state',label:'Visual state to clone',type:'chips',opts:['Logged-out default','Logged-in','Specific theme / locale']},
   {k:'assets',label:'Asset reuse',type:'chips',opts:['Reuse original assets','Placeholder (brand constraints)']},
+  {k:'api_base',label:'Legacy data service (optional)',type:'text',ph:'http://localhost:8400',hint:'Point at a running data service (Legacy Transform → Generate data service) and matching pages fetch REAL rows from the live DB instead of copying text off the screenshot. Leave blank for a static pixel rebuild.'},
 ];
 const LEGACY_FORM=[
   {k:'bundle',label:'Migration bundle source',type:'text',ph:'migration-bundle/ (from the ingested job)'},
@@ -1619,6 +1620,8 @@ const LEGACY_FORM=[
   {k:'auth_db',label:'Auth database',type:'chips',opts:['Separate auth DB (two-DB router)','Reuse legacy']},
   {k:'microservices',label:'Extract microservices',type:'chips',opts:['None','Extract heavy modules']},
   {k:'parity_gate',label:'Data-parity gate',type:'chips',opts:['Enforce data parity (recommended)','Skip']},
+  {k:'db_url',label:'Live legacy DB (optional)',type:'text',ph:'mysql://user:pass@127.0.0.1:3307/dbname',hint:'Supply this and the run also GENERATES a Django data service over the live DB (managed=False, read-only) — the API the rebuilt UI fetches from. Blank = schema analysis only.'},
+  {k:'service_port',label:'Data service port',type:'text',ph:'8400'},
 ];
 const stage2Answers={pixel:{},legacy:{}};
 function renderForm(kind){
@@ -1632,6 +1635,20 @@ function renderForm(kind){
     ans.site_url=(job&&job.revive_result&&job.revive_result.url)||location.origin;
   }
   if(kind==='legacy'&&!ans.bundle&&job)ans.bundle=(job.source||'')+' → migration-bundle/';
+  // Revive wrote the compose, so it already knows the engine, published port and
+  // credentials — prefill them rather than making the user read ports off
+  // `docker ps` and retype them (a wrong port is the likeliest way to get a
+  // confusing failure here). Same idea as site_url above.
+  const rr=(job&&job.revive_result)||{};
+  if(kind==='legacy'&&!ans.db_url&&rr.db_url)ans.db_url=rr.db_url;
+  if(kind==='legacy'&&!ans.service_port)ans.service_port=String(8400+(rr.port?rr.port%50:0));
+  // And once Legacy Transform has generated + reported a service, point
+  // Pixel-Clone at it automatically so the two halves connect without copying
+  // a URL between two screens.
+  if(kind==='pixel'&&!ans.api_base){
+    const lg=(job&&job.stage2&&job.stage2.legacy&&job.stage2.legacy.result)||{};
+    if(lg.service_api_base)ans.api_base=lg.service_api_base;
+  }
   const html=cfg.map(q=>{
     if(q.showIf){const [dk,dv]=q.showIf;if(ans[dk]!==dv)return '';}
     if(q.type==='text')

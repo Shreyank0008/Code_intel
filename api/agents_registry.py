@@ -69,6 +69,36 @@ DEFAULT_PIXEL_PROMPT = (
     "component) — no prose, no markdown fences, no explanation."
 )
 
+# Appended to the pixel prompt when a legacy data service is available for the
+# page. Without it the model does exactly what the base prompt asks -- copies
+# the rendered text verbatim -- which produces a page whose numbers are frozen
+# at capture time: adding a row to the database changes nothing on screen.
+LIVE_DATA_PROMPT = (
+    "\n\nLIVE DATA (overrides the 'copy the text verbatim' rule for the repeating "
+    "region ONLY):\n"
+    "This page's table/list is backed by a real API endpoint given below. The "
+    "surrounding chrome — nav, headings, buttons, footer — is still a verbatim "
+    "pixel-perfect rebuild. But the repeating rows MUST come from the API at "
+    "runtime, not from the captured DOM.\n"
+    "\n"
+    "Requirements:\n"
+    "A. Use React.useState + React.useEffect (reference them as React.useState / "
+    "React.useEffect — there are no import statements in this environment).\n"
+    "B. Fetch API_URL in the effect, read `data.results` (an array of row "
+    "objects), and render ONE row per array element using the COLUMNS listed "
+    "below as the object keys. Keep the captured markup's row structure and "
+    "Tailwind classes — you are replacing the row DATA, not the row DESIGN.\n"
+    "C. Render the captured rows' <thead>/labels as-is; they are chrome.\n"
+    "D. Handle the three states explicitly: loading (a short 'Loading…' row), "
+    "error (a row showing the error text), and empty (a 'No records' row). A "
+    "blank screen on failure is not acceptable.\n"
+    "E. Derive each cell from the row object's real keys. If the original cell "
+    "combined columns (e.g. first and last name in one cell), combine the same "
+    "keys the same way.\n"
+    "F. Do NOT hardcode any value that came from the captured rows — no names, "
+    "no numbers, no ids. Those are sample data and will be wrong tomorrow.\n"
+)
+
 DEFAULT_MAPPING_PROMPT = (
     "You are a software-sizing analyst applying the Use Case Point (UCP) "
     "method (RFE Annexure 11). Given these static-analysis metrics of a "

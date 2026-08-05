@@ -42,10 +42,10 @@ from django.conf import settings
 from . import jobs
 from . import providers
 from . import revive as R   # reuse ports/health/openapi helpers
+from .skill_paths import skill_script
 
-SKILLS = Path.home() / ".claude/skills/run-any-codebase/scripts"
-RECON = SKILLS / "recon.sh"
-GAPSCAN = SKILLS / "gap_scan.py"
+RECON = skill_script("run-any-codebase/scripts/recon.sh")
+GAPSCAN = skill_script("run-any-codebase/scripts/gap_scan.py")
 WORK = Path("/tmp/codeintel_revive_agent")
 BUILD_TIMEOUT = 600
 MAX_ATTEMPTS = 2
@@ -480,6 +480,9 @@ def run(job: dict, log) -> dict:
     # files), it's the sole path for repos whose compose was already
     # complete, and any build error here — including one in a freshly
     # generated backend — still goes through the same self-heal as always.
+    _wire_db_healthchecks(sandbox, compose, log)
+    _wire_framework_db_init(sandbox, compose, log)
+
     provider = providers.active_provider()
     last_err = ""
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -648,9 +651,19 @@ def run(job: dict, log) -> dict:
     gaps = _gap_scan(base, sandbox, log)
     oa = R._probe_openapi(base, log)
 
+    # Hand the DB connection forward so Legacy Transform can prefill it instead
+    # of the user reading ports off `docker ps`. Suppressed in demo mode, where
+    # the response is exposed publicly and this carries credentials.
+    dbs = [] if getattr(settings, "CODEINTEL_DEMO_MODE", False) else _db_urls_from_compose(compose)
+    if dbs:
+        log("m", "database connection captured for Legacy Transform: "
+                 + ", ".join(f"{d['service']} ({d['engine']} :{d['port']})" for d in dbs))
+
     log("ok", f"● Revive Agent complete — LIVE {base} · {len(fixes)} self-heal fix(es) · "
               f"{len(gaps.get('broken', []))} broken page(s)")
     return finish({
+        "databases": dbs,
+        "db_url": dbs[0]["url"] if dbs else "",
         "status": "running", "url": base, "port": port, "containers": containers,
         "pages_working": gaps.get("ok", 0), "pages_total": gaps.get("total", 0),
         "api_routes": (oa or {}).get("routes", []), "api_source": (oa or {}).get("source"),
@@ -666,6 +679,375 @@ def run(job: dict, log) -> dict:
 def _pick_port(jid: str) -> int:
     m = re.search(r"(\d+)", jid)
     return 8100 + ((int(m.group(1)) if m else 0) % 800)
+
+
+_SPRING_PROFILE_FILE_RE = re.compile(r"^application-([A-Za-z0-9_]+)\.(?:properties|ya?ml)$")
+_DB_IMAGE_RE = re.compile(r"^\s*image:\s*[\"']?(mysql|mariadb|postgres|postgresql)\b", re.M | re.I)
+_JDBC_RE = re.compile(r"jdbc:(\w+)://", re.I)
+
+
+def _spring_profiles(sandbox: Path) -> set:
+    """Profile names the repo actually ships (application-mysql.properties -> mysql)."""
+    found, seen = set(), 0
+    for p in sandbox.rglob("application-*"):
+        seen += 1
+        if seen > 4000:
+            break
+        m = _SPRING_PROFILE_FILE_RE.match(p.name)
+        if m:
+            found.add(m.group(1).lower())
+    return found
+
+
+def _compose_service_blocks(text: str) -> list:
+    """[(name, start_idx, end_idx, key_indent)] over the top-level `services:` map.
+
+    Deliberately not a YAML parser -- pyyaml isn't a dependency of this project
+    and adding one for a targeted edit isn't worth it. Indentation is read from
+    the file rather than assumed, so 2- and 4-space composes both work."""
+    lines = text.splitlines(keepends=True)
+    starts, out = [], []
+    in_services = False
+    svc_indent = None
+    for i, line in enumerate(lines):
+        if re.match(r"^services:\s*$", line):
+            in_services = True
+            continue
+        if not in_services:
+            continue
+        if line.strip() and not line[0].isspace():
+            break  # a new top-level key ended the services map
+        m = re.match(r"^(\s+)([A-Za-z0-9._-]+):\s*$", line)
+        if m:
+            indent = len(m.group(1))
+            if svc_indent is None:
+                svc_indent = indent
+            if indent == svc_indent:
+                starts.append((m.group(2), i))
+    for n, (name, i) in enumerate(starts):
+        end = starts[n + 1][1] if n + 1 < len(starts) else len(lines)
+        out.append((name, i, end, (svc_indent or 2) + 2))
+    return out
+
+
+def _app_service_block(text: str):
+    """The service that builds THIS repo -- the one a startup command belongs on."""
+    lines = text.splitlines(keepends=True)
+    for name, start, end, indent in _compose_service_blocks(text):
+        body = "".join(lines[start:end])
+        if re.search(r"^\s+build:", body, re.M):
+            return name, start, end, indent
+    return None
+
+
+def _inject_startup_command(compose_path: Path, text: str, prefix: str, log) -> bool:
+    """Run `prefix` before whatever the app service already starts with.
+
+    Django/Rails create their tables through a CLI step (migrate / db:prepare),
+    not a config flag, so the Spring env-var approach doesn't transfer -- the
+    command itself has to change."""
+    blk = _app_service_block(text)
+    if not blk:
+        log("warn", "no build: service in the compose — startup command not wired")
+        return False
+    name, start, end, indent = blk
+    lines = text.splitlines(keepends=True)
+    body = "".join(lines[start:end])
+
+    m = re.search(r"^(\s+)command:\s*(.+?)\s*$", body, re.M)
+    if m:
+        existing = m.group(2).strip()
+        if existing.startswith(("[", "{", ">", "|")):
+            log("warn", f"'{name}' uses a list/block command — not rewriting it; "
+                        f"run `{prefix}` manually if tables are missing")
+            return False
+        if existing.startswith(("'", '"')):
+            existing = existing[1:-1] if len(existing) > 1 and existing[-1] == existing[0] else existing
+        if prefix.split()[0] in existing and "migrate" in existing or "db:prepare" in existing:
+            return False  # already does it
+        if '"' in existing:
+            log("warn", f"'{name}' command contains quotes — not rewriting automatically")
+            return False
+        new_cmd = f"""{m.group(1)}command: 'sh -c "{prefix} && exec {existing}"'\n"""
+        body = body[: m.start()] + new_cmd + body[m.end() + 1:]
+    else:
+        # No command: the image's CMD starts it. Read that out of the Dockerfile
+        # so the prefix can run ahead of it instead of replacing it.
+        dockerfile = compose_path.parent / "Dockerfile"
+        cmd = ""
+        if dockerfile.exists():
+            dm = re.findall(r"^\s*CMD\s+(.+)$", dockerfile.read_text(errors="ignore"), re.M)
+            if dm:
+                raw = dm[-1].strip()
+                if raw.startswith("["):
+                    try:
+                        cmd = " ".join(json.loads(raw))
+                    except Exception:
+                        cmd = ""
+                else:
+                    cmd = raw
+        if not cmd or '"' in cmd:
+            log("warn", f"could not determine '{name}' start command — "
+                        f"`{prefix}` not wired; tables may be missing on first boot")
+            return False
+        pad = " " * indent
+        body = body.rstrip("\n") + f"""\n{pad}command: 'sh -c "{prefix} && exec {cmd}"'\n"""
+
+    new_text = "".join(lines[:start]) + body + "".join(lines[end:])
+    try:
+        compose_path.write_text(new_text)
+    except OSError:
+        return False
+    log("ok", f"wired `{prefix}` into the '{name}' start command — without it the "
+              "tables are never created and DB-backed pages fail ✓")
+    return True
+
+
+def _wire_django(sandbox: Path, compose_path: Path, text: str, log) -> bool:
+    if not (sandbox / "manage.py").exists() and not _find_first(sandbox, "manage.py"):
+        return False
+    if re.search(r"manage\.py\s+migrate", text):
+        return False
+    return _inject_startup_command(compose_path, text, "python manage.py migrate --noinput", log)
+
+
+def _wire_rails(sandbox: Path, compose_path: Path, text: str, log) -> bool:
+    if not (sandbox / "config" / "application.rb").exists():
+        return False
+    if re.search(r"db:(prepare|setup|migrate|schema:load)", text):
+        return False
+    # db:prepare is the idempotent one -- creates the DB if absent, loads the
+    # schema, then applies migrations. db:migrate alone fails on an empty DB.
+    return _inject_startup_command(compose_path, text, "bin/rails db:prepare", log)
+
+
+_SERVICE_IMAGE_RE = re.compile(r"^\s+image:\s*[\"']?([\w.\-/]+)", re.M)
+# Health probes verified by running them inside the real images before being
+# wired in -- a probe that never passes is worse than the race it fixes,
+# because `condition: service_healthy` would then block the app forever.
+_DB_HEALTHCHECKS = {
+    "postgres": 'pg_isready -U "$${POSTGRES_USER:-postgres}" -d "$${POSTGRES_DB:-postgres}"',
+    "postgis": 'pg_isready -U "$${POSTGRES_USER:-postgres}" -d "$${POSTGRES_DB:-postgres}"',
+    "mysql": 'mysqladmin ping -h 127.0.0.1 -u root --password="$${MYSQL_ROOT_PASSWORD:-}" --silent',
+    "mariadb": 'mysqladmin ping -h 127.0.0.1 -u root --password="$${MARIADB_ROOT_PASSWORD:-$${MYSQL_ROOT_PASSWORD:-}}" --silent',
+    "redis": "redis-cli ping",
+    "mongo": "mongosh --quiet --eval 'db.adminCommand(\"ping\")'",
+}
+
+
+def _db_kind(image: str) -> str | None:
+    base = image.split("/")[-1].split(":")[0].lower()
+    if base in ("postgresql",):
+        base = "postgres"
+    return base if base in _DB_HEALTHCHECKS else None
+
+
+def _db_urls_from_compose(compose: str) -> list:
+    """Connection URLs for every database the revived app just booted.
+
+    Revive wrote (or adapted) this compose, so it already knows the engine, the
+    published host port and the credentials -- making the user read them off
+    `docker ps` and retype them into Legacy Transform is busywork, and typing
+    the wrong port is the likeliest way to get a confusing failure.
+    """
+    try:
+        text = Path(compose).read_text(errors="ignore")
+    except OSError:
+        return []
+    if text and not text.endswith("\n"):
+        text += "\n"
+    lines = text.splitlines(keepends=True)
+    out = []
+    for name, start, end, _ in _compose_service_blocks(text):
+        body = "".join(lines[start:end])
+        m = _SERVICE_IMAGE_RE.search(body)
+        kind = _db_kind(m.group(1)) if m else None
+        if kind not in ("mysql", "mariadb", "postgres"):
+            continue
+        env = dict(re.findall(r"^\s+-\s*([A-Z_]+)=(.*)$", body, re.M))
+        env.update(dict(re.findall(r"^\s+([A-Z_]+):\s*[\"']?([^\"'\n]*)", body, re.M)))
+        # "3307:3306" -> host port 3307; that is what reaches the DB from here.
+        pm = re.search(r'^\s+-\s*"?(\d+):(\d+)"?', body, re.M)
+        host_port = pm.group(1) if pm else ("3306" if kind != "postgres" else "5432")
+        if kind == "postgres":
+            user = env.get("POSTGRES_USER") or "postgres"
+            pwd = env.get("POSTGRES_PASSWORD") or ""
+            db = env.get("POSTGRES_DB") or user
+            scheme = "postgres"
+        else:
+            user = env.get("MYSQL_USER") or "root"
+            pwd = env.get("MYSQL_PASSWORD") or env.get("MYSQL_ROOT_PASSWORD") or ""
+            db = env.get("MYSQL_DATABASE") or ""
+            scheme = "mysql"
+        if not db:
+            continue
+        out.append({"service": name, "engine": scheme, "port": host_port,
+                    "url": f"{scheme}://{user}:{pwd}@127.0.0.1:{host_port}/{db}"})
+    return out
+
+
+def _wire_db_healthchecks(sandbox: Path, compose: str, log) -> bool:
+    """Hold the app back until the database actually answers.
+
+    `depends_on: [db]` only orders STARTUP, it does not wait for readiness, so
+    the app routinely opens a connection while the database is still
+    initialising and dies with "Connection refused". It's a race, so it passes
+    on a fast machine and fails on a slow one -- which makes it look like a bug
+    in the ingested app rather than in how it was booted (hit live while
+    testing a Django+Postgres boot: the web container crashed on startup and
+    only came up after a manual restart).
+
+    Adds a healthcheck to each recognised database service and upgrades the
+    app's depends_on to the condition form that honours it."""
+    path = Path(compose)
+    try:
+        text = path.read_text(errors="ignore")
+    except OSError:
+        return False
+
+    # A file whose last line has no newline defeats every `.*\n` line pattern
+    # below. An LLM-written compose routinely ends that way, and the symptom is
+    # silent: depends_on parsed as EMPTY, so the app was gated on nothing and
+    # the race this function exists to fix stayed wide open (seen live on
+    # job_003 — "'app' waits for " with no service named).
+    if text and not text.endswith("\n"):
+        text += "\n"
+
+    blocks = _compose_service_blocks(text)
+    if not blocks:
+        return False
+    lines = text.splitlines(keepends=True)
+
+    dbs = {}
+    app = None
+    for name, start, end, indent in blocks:
+        body = "".join(lines[start:end])
+        m = _SERVICE_IMAGE_RE.search(body)
+        kind = _db_kind(m.group(1)) if m else None
+        if kind:
+            dbs[name] = kind
+        elif re.search(r"^\s+build:", body, re.M):
+            app = (name, start, end, indent)
+    if not dbs or not app:
+        return False
+
+    out, changed = [], []
+    for name, start, end, indent in blocks:
+        body = "".join(lines[start:end])
+        pad = " " * indent
+        if name in dbs and "healthcheck:" not in body:
+            probe = _DB_HEALTHCHECKS[dbs[name]]
+            body = body.rstrip("\n") + "\n" + "".join([
+                f"{pad}healthcheck:\n",
+                f'{pad}  test: ["CMD-SHELL", {json.dumps(probe)}]\n',
+                f"{pad}  interval: 5s\n",
+                f"{pad}  timeout: 5s\n",
+                f"{pad}  retries: 24\n",
+                f"{pad}  start_period: 20s\n",
+            ])
+            changed.append(f"healthcheck on '{name}'")
+        if name == app[0] and "condition:" not in body:
+            dep = re.search(rf"^{pad}depends_on:\s*\n((?:{pad}\s+-.*\n)*)", body, re.M)
+            existing = re.findall(r"-\s*([\w.-]+)", dep.group(1)) if dep else list(dbs)
+            waits = "".join(
+                f"{pad}  {s}:\n{pad}    condition: "
+                f"{'service_healthy' if s in dbs else 'service_started'}\n"
+                for s in existing)
+            new_dep = f"{pad}depends_on:\n{waits}"
+            body = (body[: dep.start()] + new_dep + body[dep.end():]) if dep \
+                else body.rstrip("\n") + "\n" + new_dep
+            changed.append(f"'{app[0]}' waits for {', '.join(s for s in existing if s in dbs)}")
+        out.append(body)
+
+    if not changed:
+        return False
+    new_text = "".join(lines[: blocks[0][1]]) + "".join(out) + "".join(lines[blocks[-1][2]:])
+    try:
+        path.write_text(new_text)
+    except OSError:
+        return False
+    log("ok", "readiness-gated the database: " + "; ".join(changed)
+             + " — prevents the app racing an uninitialised DB ✓")
+    return True
+
+
+def _wire_framework_db_init(sandbox: Path, compose: str, log) -> bool:
+    """Make the app create its own tables on boot.
+
+    Every framework has a step that turns an empty database into a usable one,
+    and none of them run it by default in a generated compose. The shape of the
+    fix differs per stack -- Spring flips a config profile, Django and Rails run
+    a CLI command -- but the failure is identical and identically quiet: the
+    boot succeeds, the homepage loads, and only DB-backed pages 500."""
+    path = Path(compose)
+    try:
+        text = path.read_text(errors="ignore")
+    except OSError:
+        return False
+    if text and not text.endswith("\n"):
+        text += "\n"
+    if _wire_spring_profile(sandbox, path, text, log):
+        return True
+    if _wire_django(sandbox, path, text, log):
+        return True
+    return _wire_rails(sandbox, path, text, log)
+
+
+def _wire_spring_profile(sandbox: Path, path: Path, text: str, log) -> bool:
+    """Activate the framework's DB profile when the compose wires a real database.
+
+    A Spring app pointed at MySQL purely via SPRING_DATASOURCE_URL connects fine
+    and then serves 500s, because the schema is never created: PetClinic keeps
+    `spring.sql.init.mode=always` (the setting that runs schema.sql + data.sql)
+    in application-mysql.properties, and its default profile also sets
+    `ddl-auto=none`, so with no profile active NOTHING creates the tables. The
+    boot looks completely successful -- containers up, homepage 200 -- and only
+    the pages that touch the missing tables fail, which no build-error self-heal
+    can catch (confirmed live: job_002 served /vets.html as a 500 with
+    "Table 'petclinic.vets' doesn't exist" while Revive reported success).
+
+    Deterministic on purpose: the LLM that writes the app service reliably gets
+    the datasource right and the profile wrong, so this is a post-pass rather
+    than more prompt text.
+    """
+    if "SPRING_PROFILES_ACTIVE" in text or "spring.profiles.active" in text:
+        return False
+
+    profiles = _spring_profiles(sandbox)
+    if not profiles:
+        return False
+
+    # Prefer the DB the app is actually pointed at; fall back to the DB image
+    # present in the compose.
+    profile = None
+    m = _JDBC_RE.search(text)
+    if m and m.group(1).lower() in profiles:
+        profile = m.group(1).lower()
+    if not profile:
+        for img in _DB_IMAGE_RE.findall(text):
+            name = "postgres" if img.lower().startswith("postgres") else img.lower()
+            if name in profiles:
+                profile = name
+                break
+    if not profile:
+        return False
+
+    anchor = re.search(r"^(\s*)-\s*SPRING_DATASOURCE_URL=", text, re.M)
+    if not anchor:
+        log("warn", f"repo ships an '{profile}' Spring profile but the compose has no "
+                    "SPRING_DATASOURCE_URL to anchor to — profile not wired")
+        return False
+    indent = anchor.group(1)
+    text = (text[: anchor.start()]
+            + f"{indent}- SPRING_PROFILES_ACTIVE={profile}\n"
+            + text[anchor.start():])
+    try:
+        path.write_text(text)
+    except OSError:
+        return False
+    log("ok", f"wired SPRING_PROFILES_ACTIVE={profile} — without it the schema never "
+              "loads and DB-backed pages 500 on an otherwise 'successful' boot ✓")
+    return True
 
 
 def _containerize(job: dict, sandbox: Path, recon: dict, log, usage: dict) -> str | None:
@@ -697,7 +1079,7 @@ def _containerize(job: dict, sandbox: Path, recon: dict, log, usage: dict) -> st
     wrote = []
     for rel, content in files.items():
         if _EDITABLE.search(rel) and content.strip():
-            (sandbox / os.path.basename(rel)).write_text(content)
+            _write_build_file(sandbox / os.path.basename(rel), content, log)
             wrote.append(os.path.basename(rel))
     compose = R._find_compose(sandbox)
     if compose and any("compose" in w for w in wrote):
@@ -784,12 +1166,54 @@ def _augment_missing_app_service(job: dict, sandbox: Path, compose: str, recon: 
     if choice == "Skip":
         log("warn", "user chose to skip adding the missing app service.")
         return None
-    Path(compose).write_text(compose_content)
+    _write_build_file(Path(compose), compose_content, log)
     if dockerfile_content:
-        (sandbox / "Dockerfile").write_text(dockerfile_content)
+        _write_build_file(sandbox / "Dockerfile", dockerfile_content, log)
     log("ok", f"added the missing app service ✓ ({what}, web port {port}) — retrying…")
     return {"file": what, "bytes": len(compose_content) + len(dockerfile_content),
             "type": "added_missing_app_service"}
+
+
+_FENCE_LINE_RE = re.compile(r"^\s*`{3,}[\w+.-]*\s*$")
+
+
+def _strip_code_fences(content: str) -> str:
+    """Drop markdown fences wrapping an LLM-returned file body.
+
+    Loops instead of one $-anchored substitution: models sometimes close a
+    block TWICE, and an anchored strip removes only the final fence. The
+    survivor is written into the file verbatim and Docker dies with
+    `dockerfile parse error: unknown instruction: ``` ` -- confirmed live on
+    job_003, whose generated Dockerfile ended with a stray fence on line 14.
+    Only leading/trailing fence-only lines go; anything mid-file is content.
+    """
+    lines = content.strip().split("\n")
+    while lines and _FENCE_LINE_RE.match(lines[0]):
+        lines.pop(0)
+    while lines and _FENCE_LINE_RE.match(lines[-1]):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+def _write_build_file(path: Path, content: str, log=None) -> None:
+    """Single choke point for every LLM-authored build file.
+
+    Parser-level fence stripping kept missing shapes -- a stray ``` reached the
+    Dockerfile twice in a row on job_003 and Docker refused it with "unknown
+    instruction: ```", burning a self-heal attempt each time. Rather than keep
+    chasing response shapes, sanitise here, where the question is decidable: in
+    a Dockerfile or a compose file a line of nothing but backticks is NEVER
+    valid content, wherever it appears. Trailing newline included so the
+    line-oriented compose rewrites downstream can match the last line.
+    """
+    cleaned = [ln for ln in _strip_code_fences(content).split("\n")
+               if not _FENCE_LINE_RE.match(ln)]
+    dropped = len(_strip_code_fences(content).split("\n")) - len(cleaned)
+    text = "\n".join(cleaned).rstrip("\n") + "\n"
+    path.write_text(text)
+    if dropped and log:
+        log("warn", f"stripped {dropped} stray markdown fence line(s) from "
+                    f"{path.name} — the model left them in its output")
 
 
 def _parse_files(raw: str) -> dict:
@@ -797,8 +1221,7 @@ def _parse_files(raw: str) -> dict:
     for part in re.split(r"(?m)^FILE:\s*", raw)[1:]:
         lines = part.split("\n")
         name = lines[0].strip().strip("`")
-        content = "\n".join(lines[1:])
-        content = re.sub(r"^```[\w]*\n|\n```\s*$", "", content.strip())
+        content = _strip_code_fences("\n".join(lines[1:]))
         if name:
             files[name] = content
     return files
@@ -818,11 +1241,11 @@ def _parse_files_loose(raw: str) -> dict:
         head = lines[0].strip()
         hm = re.match(r"^(?:#|//)\s*(?:FILE:\s*)?([\w.\-]+\.[\w]+|Dockerfile)\b", head, re.I)
         if hm:
-            files[hm.group(1)] = "\n".join(lines[1:]).strip()
+            files[hm.group(1)] = _strip_code_fences("\n".join(lines[1:]))
         elif lang == "dockerfile":
-            files["Dockerfile"] = body.strip()
+            files["Dockerfile"] = _strip_code_fences(body)
         elif lang in ("yaml", "yml") and body.strip().startswith(("services:", "version:")):
-            files["docker-compose.yml"] = body.strip()
+            files["docker-compose.yml"] = _strip_code_fences(body)
     return files
 
 
@@ -843,13 +1266,13 @@ def _extract_single_file(raw: str, expected_name: str) -> str:
     text itself if it plausibly looks like the right kind of content."""
     files = _all_parsed_files(raw)
     if files.get(expected_name, "").strip():
-        return files[expected_name].strip()
+        return _strip_code_fences(files[expected_name])
     m = re.search(r"```(?:ya?ml|dockerfile)?\s*\n(.*?)\n```", raw, re.S | re.I)
     if m and m.group(1).strip():
-        return m.group(1).strip()
+        return _strip_code_fences(m.group(1))
     stripped = raw.strip()
     if stripped.startswith(("services:", "version:")):
-        return stripped
+        return _strip_code_fences(stripped)
     return ""
 
 
@@ -917,7 +1340,9 @@ def _self_heal(job: dict, sandbox: Path, compose: str, err: str, log, usage: dic
     if not m:
         return None
     rel, content = m.group(1).strip(), m.group(2)
-    content = re.sub(r"^```[\w]*\n|\n```$", "", content.strip())
+    # Was a second copy of the same $-anchored strip that let a doubled closing
+    # fence through; _write_build_file below is now the authority.
+    content = _strip_code_fences(content)
     # GUARDRAIL: only build/config files, inside the sandbox
     if not _EDITABLE.search(rel):
         log("warn", f"self-heal refused to edit non-build file: {rel}")
@@ -936,7 +1361,7 @@ def _self_heal(job: dict, sandbox: Path, compose: str, err: str, log, usage: dic
         log("warn", "user chose to skip the self-heal fix.")
         return None
     try:
-        target.write_text(content)
+        _write_build_file(target, content, log)
     except OSError:
         return None
     log("ok", f"self-heal applied a fix to {rel} — retrying build…")

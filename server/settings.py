@@ -44,6 +44,11 @@ CODEINTEL_JOBS_FILE = str(BASE_DIR / "jobs_store.json")
 # spend risk), and disables the free-text AI chat assistant.
 CODEINTEL_DEMO_MODE = os.environ.get("CODEINTEL_DEMO_MODE", "0") == "1"
 # run-any-codebase skill's own artifact extractor (deep per-file catalog).
+# Resolved through api.skill_paths: repo-local `skills/` first, then the
+# original ~/.claude/skills location. Safe to import here -- skill_paths pulls
+# in nothing but os/pathlib, so it doesn't touch the app registry.
+from api.skill_paths import skill_script as _skill_script
+
 CODEINTEL_SKILL_EXTRACTOR = str(
-    Path.home() / ".claude/skills/run-any-codebase/scripts/extract_artifacts.py"
+    _skill_script("run-any-codebase/scripts/extract_artifacts.py")
 )

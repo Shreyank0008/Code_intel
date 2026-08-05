@@ -24,10 +24,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from django.conf import settings
 from . import jobs
+from .skill_paths import skill_script, missing_hint
 
-SKILLS = Path.home() / ".claude/skills"
-PIXEL_CAPTURE = SKILLS / "pixel-clone/scripts/capture.py"
-LEGACY_SCHEMA = SKILLS / "legacy-transform/scripts/schema_diff.py"
+PIXEL_CAPTURE = skill_script("pixel-clone/scripts/capture.py")
+LEGACY_SCHEMA = skill_script("legacy-transform/scripts/schema_diff.py")
 WORK = Path("/tmp/codeintel_stage2")
 CAPTURE_TIMEOUT = 240
 SCHEMA_TIMEOUT = 120
@@ -77,7 +77,7 @@ def _run(jid, kind, answers):
 
 def _run_pixel(jid, answers, log):
     if not PIXEL_CAPTURE.exists():
-        return {"ok": False, "reason": "pixel-clone capture.py not found"}
+        return {"ok": False, "reason": missing_hint("pixel-clone/scripts/capture.py")}
     url = (answers.get("site_url") or "").strip()
     host = url.split("//", 1)[-1].split("/", 1)[0].split(":")[0].lower() if "//" in url else ""
     if host not in ("localhost", "127.0.0.1", "0.0.0.0"):
@@ -146,7 +146,7 @@ def _run_pixel(jid, answers, log):
 
 def _run_legacy(jid, job, answers, log):
     if not LEGACY_SCHEMA.exists():
-        return {"ok": False, "reason": "legacy-transform schema_diff.py not found"}
+        return {"ok": False, "reason": missing_hint("legacy-transform/scripts/schema_diff.py")}
     src = jobs.ensure_source_dir(job, log)
     if not src:
         return {"ok": False, "reason": "legacy source not available locally and could not be re-cloned — re-ingest as a local path"}
@@ -170,6 +170,56 @@ def _run_legacy(jid, job, answers, log):
         except Exception:
             pass
     log("ok", "schema analysis complete ✓")
-    return {"ok": True, "confident_missing": proc.returncode,
-            "report": str(outdir / "schema_diff.md"), "data": data,
-            "stdout_tail": (proc.stdout or "").strip().splitlines()[-15:]}
+    result = {"ok": True, "confident_missing": proc.returncode,
+              "report": str(outdir / "schema_diff.md"), "data": data,
+              "stdout_tail": (proc.stdout or "").strip().splitlines()[-15:]}
+    result.update(_gen_data_service(jid, answers, outdir, log))
+    return result
+
+
+def _gen_data_service(jid, answers, outdir, log) -> dict:
+    """Generate the read-only Django bridge over the LIVE legacy database.
+
+    Optional -- schema analysis is static and needs no database, but the rebuilt
+    UI needs a real API to fetch from, and that requires connecting to the DB the
+    legacy app is actually running on."""
+    db_url = (answers.get("db_url") or "").strip()
+    if not db_url:
+        log("m", "no live DB URL supplied — schema analysis only "
+                 "(add one to also generate the data service the rebuilt UI fetches from)")
+        return {}
+    script = skill_script("legacy-transform/scripts/gen_service.py")
+    if not script.exists():
+        return {"service_error": missing_hint("legacy-transform/scripts/gen_service.py")}
+    svc_dir = outdir / "service"
+    port = str(answers.get("service_port") or "8400").strip() or "8400"
+    cmd = [sys.executable, str(script), "--db-url", db_url, "--out", str(svc_dir), "--port", port]
+    # Credentials live in db_url -- log the command with the URL redacted.
+    log("t", "$ gen_service.py --db-url <redacted> --out " + str(svc_dir))
+    log("info", "introspecting the live legacy database …")
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=SCHEMA_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return {"service_error": "gen_service timed out"}
+    for line in (p.stdout or "").strip().splitlines()[-10:]:
+        log("m", line)
+    if p.returncode != 0:
+        err = (p.stderr or "").strip().splitlines()[-3:]
+        for line in err:
+            log("err", line)
+        return {"service_error": "; ".join(err) or "gen_service failed"}
+    manifest = {}
+    mf = svc_dir / "service_manifest.json"
+    if mf.exists():
+        try:
+            manifest = json.loads(mf.read_text())
+        except Exception:
+            pass
+    log("ok", f"data service generated — {len(manifest.get('tables', []))} table(s), "
+              f"managed=False, read-only ✓")
+    log("m", f"run it:  PORT={port} {svc_dir}/run.sh   → http://localhost:{port}")
+    log("m", f"then put http://localhost:{port} in Pixel-Clone's "
+             "'Legacy data service' field to make the rebuilt pages show REAL rows")
+    return {"service_dir": str(svc_dir), "service_port": port,
+            "service_tables": [t["table"] for t in manifest.get("tables", [])],
+            "service_api_base": f"http://localhost:{port}"}
