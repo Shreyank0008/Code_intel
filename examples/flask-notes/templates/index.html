@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Flask Notes</title></head>
+<body style="margin:0;font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0">
+  <header style="padding:16px 32px;background:#1e293b;display:flex;align-items:center;gap:12px">
+    <div style="width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#6366f1,#0891b2)"></div>
+    <b style="font-size:17px">Flask Notes</b>
+  </header>
+  <main style="padding:32px;max-width:640px">
+    <h1 style="font-size:24px">Your notes</h1>
+    <ul style="list-style:none;padding:0">
+      {% for n in notes %}
+      <li style="background:#1e293b;border-radius:10px;padding:14px 16px;margin-bottom:10px">
+        <a href="/notes/{{ n.id }}" style="color:#818cf8;font-weight:600;text-decoration:none">{{ n.title }}</a>
+        <p style="color:#94a3b8;margin:6px 0 0">{{ n.body }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="/notes" style="margin-top:20px;display:flex;flex-direction:column;gap:8px">
+      <input name="title" placeholder="Title" style="padding:10px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0">
+      <textarea name="body" placeholder="Write a note…" style="padding:10px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0"></textarea>
+      <button style="background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px;font-weight:600">Add note</button>
+    </form>
+  </main>
+</body>
+</html>

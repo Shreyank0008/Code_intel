@@ -1,0 +1,6 @@
+secrets.json
+jobs_store.json
+agents_store.json
+server.log
+__pycache__/
+*.pyc

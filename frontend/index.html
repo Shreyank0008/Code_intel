@@ -1,0 +1,2137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Code Modernisation · Ingest → Size → Price</title>
+<style>
+  :root{
+    --bg:#0a0d0f;--bg2:#0d1113;--panel:#121719;--panel2:#171d20;--line:#232b2f;
+    --ink:#e7edee;--muted:#8a979c;--dim:#5f6b70;
+    --emerald:#22c55e;--emerald2:#16a34a;--teal:#0891b2;
+    --amber:#f59e0b;--red:#ef4444;--blue:#3b82f6;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--r:12px;
+    --term:#05080a;--termln:#232b2f;
+  }
+  :root[data-theme="light"]{
+    --bg:#f3f1ec;--bg2:#ffffff;--panel:#ffffff;--panel2:#efece5;--line:#ddd7cb;
+    --ink:#1a1f27;--muted:#57606e;--dim:#8b93a0;
+    --emerald:#15803d;--emerald2:#166534;--teal:#0e7490;
+    --amber:#c2600a;--red:#dc2626;--blue:#2563eb;
+    --term:#0d1117;--termln:#2a3441;
+  }
+  /* light theme: give cards/inputs a crisper edge */
+  :root[data-theme="light"] .card,
+  :root[data-theme="light"] .statcard,
+  :root[data-theme="light"] .agentcard,
+  :root[data-theme="light"] .proofcard,
+  :root[data-theme="light"] .plancard{box-shadow:0 1px 2px rgba(15,23,42,.05)}
+  :root[data-theme="light"] input[type=text],
+  :root[data-theme="light"] input[type=number],
+  :root[data-theme="light"] select,
+  :root[data-theme="light"] textarea{border-color:#d6cfc2;background:#faf9f6}
+  :root[data-theme="light"] aside{background:#fbfaf8}
+  *{box-sizing:border-box}html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased;display:flex;min-height:100vh}
+  aside{width:222px;flex-shrink:0;background:var(--bg2);border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column;gap:4px}
+  .brand{display:flex;align-items:center;gap:9px;padding:6px 8px 14px}
+  .brand .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--emerald),var(--teal));display:grid;place-items:center;font-weight:800;color:#04110a;font-size:13px}
+  .brand b{font-size:14px}.brand span{display:block;font-size:11px;color:var(--muted)}
+  .navlbl{font-size:10px;letter-spacing:.6px;color:var(--dim);text-transform:uppercase;padding:12px 8px 4px}
+  .nav{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;color:var(--muted);font-size:13.5px;font-weight:500;border:1px solid transparent}
+  .nav:hover{background:var(--panel);color:var(--ink)}
+  .nav.active{background:var(--panel2);color:var(--ink);border-color:var(--line)}
+  .nav i{width:16px;text-align:center;font-style:normal}
+  .nav.locked{opacity:.4;cursor:not-allowed}
+  .nav.locked::after{content:"🔒";margin-left:auto;font-size:11px;opacity:.7}
+  .nav.locked:hover{background:none;color:var(--muted)}
+  .q{margin-bottom:16px}
+  .info{display:inline-grid;place-items:center;width:14px;height:14px;border-radius:50%;
+    font-size:9px;color:var(--muted);border:1px solid var(--line);cursor:help;position:relative;vertical-align:middle}
+  .info:hover{color:var(--emerald);border-color:var(--emerald)}
+  .info::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);
+    width:260px;background:var(--term);color:#e7edee;border:1px solid var(--termln);border-radius:8px;
+    padding:9px 11px;font-size:11.5px;line-height:1.5;font-weight:400;text-transform:none;letter-spacing:0;
+    text-align:left;opacity:0;visibility:hidden;transition:.15s;z-index:60;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.3)}
+  .info::before{content:"";position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);
+    border:6px solid transparent;border-top-color:var(--termln);opacity:0;visibility:hidden;transition:.15s;z-index:60}
+  .info:hover::after,.info:hover::before{opacity:1;visibility:visible}
+  .bootbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0;padding:14px 16px;
+    border:1px solid var(--line);border-radius:10px;background:linear-gradient(90deg,rgba(245,158,11,.06),rgba(8,145,178,.05))}
+  .bootbar.live{background:linear-gradient(90deg,rgba(34,197,94,.08),rgba(8,145,178,.05));border-color:rgba(34,197,94,.3)}
+  /* Agent chatbot */
+  #chatFab{position:fixed;right:22px;bottom:22px;width:52px;height:52px;border-radius:50%;
+    background:linear-gradient(135deg,var(--emerald),var(--teal));color:#04110a;font-size:22px;
+    display:grid;place-items:center;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.3);z-index:70}
+  #chatBadge{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;border-radius:9px;
+    background:var(--red);color:#fff;font-size:11px;font-weight:700;display:none;place-items:center;padding:0 4px}
+  #chatPanel{position:fixed;top:0;right:0;width:400px;max-width:100vw;height:100vh;
+    background:var(--panel);border-left:1px solid var(--line);display:none;flex-direction:column;
+    overflow:hidden;z-index:80;box-shadow:-14px 0 44px rgba(0,0,0,.32);transform:translateX(100%);transition:transform .22s ease}
+  #chatPanel.open{transform:translateX(0)}
+  .chathead{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line);flex-shrink:0}
+  .chathead b{font-size:15px}
+  .chatjobsel{background:var(--bg2);border:1px solid var(--line);color:var(--ink);border-radius:7px;padding:4px 8px;font-size:12px;font-family:var(--mono);cursor:pointer;max-width:150px}
+  .chatjobsel:focus{outline:2px solid var(--emerald);border-color:transparent}
+  .chatbody{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+  .cmsg{max-width:85%;padding:9px 12px;border-radius:12px;font-size:13px;line-height:1.5}
+  .cmsg.user{align-self:flex-end;background:var(--emerald);color:#04110a;border-bottom-right-radius:3px}
+  .cmsg.assistant,.cmsg.agent{align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-bottom-left-radius:3px}
+  .cmsg.agent.warn{border-color:rgba(245,158,11,.4)}.cmsg.agent.err{border-color:rgba(239,68,68,.4)}
+  .cmsg.awaiting{border-color:var(--emerald);box-shadow:0 0 0 1px rgba(34,197,94,.25)}
+  .cmsg code{font-family:var(--mono);font-size:11.5px;background:var(--bg2);padding:1px 5px;border-radius:4px}
+  .cmsg .who{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--dim);margin-bottom:3px}
+  .cactions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .cact{font-size:11.5px;font-weight:600;padding:5px 10px;border-radius:7px;border:1px solid var(--emerald);color:var(--emerald);background:transparent;cursor:pointer}
+  .cact:hover{background:rgba(34,197,94,.1)}
+  .chatinput{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
+  .chatinput input{flex:1;background:var(--bg2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:9px 11px;font-size:13px}
+  .chatinput .btn{padding:9px 14px}
+  .stagebadge{font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:99px;white-space:nowrap}
+  .stagebadge.s-sized{background:rgba(139,152,169,.18);color:var(--muted)}
+  .stagebadge.s-cont{background:rgba(59,130,246,.15);color:var(--blue)}
+  .stagebadge.s-final{background:rgba(245,158,11,.15);color:var(--amber)}
+  .stagebadge.s-built{background:rgba(34,197,94,.16);color:var(--emerald)}
+  .stagebadge.s-revived{background:rgba(8,145,178,.16);color:var(--teal)}
+  .stagebadge.s-run{background:rgba(59,130,246,.12);color:var(--blue)}
+  .stagebadge.s-fail{background:rgba(239,68,68,.15);color:var(--red)}
+  .stagebadge.s-none{background:var(--panel2);color:var(--dim)}
+  main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .top{display:flex;align-items:center;gap:14px;padding:16px 26px;border-bottom:1px solid var(--line)}
+  .top .icn{width:34px;height:34px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);display:grid;place-items:center;font-size:16px}
+  .top h1{font-size:17px;margin:0}.top .sub{font-size:12px;color:var(--muted);margin-top:1px}
+  .online{margin-left:auto;font-size:11.5px;color:var(--emerald);display:flex;align-items:center;gap:6px}
+  .online::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--emerald);box-shadow:0 0 8px var(--emerald)}
+  .themebtn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;width:34px;height:34px;cursor:pointer;font-size:15px;line-height:1;display:grid;place-items:center}
+  .themebtn:hover{border-color:var(--emerald)}
+  .content{padding:24px 26px 60px;overflow:auto;flex:1}
+  .view{display:none}.view.active{display:block;animation:fade .25s}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;margin-bottom:16px}
+  .card h2{font-size:14px;margin:0 0 3px}.card .hint{font-size:12.5px;color:var(--muted);margin:0 0 14px;max-width:760px}
+  label.fld{display:block;font-size:11px;letter-spacing:.4px;color:var(--dim);text-transform:uppercase;margin:0 0 6px}
+  input[type=text],input[type=number]{width:100%;background:var(--bg2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:10px 12px;font-size:13.5px;font-family:var(--mono)}
+  input:focus{outline:2px solid var(--emerald);border-color:transparent}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}aside{width:60px}.brand b,.brand span,.navlbl,.nav span.t{display:none}}
+  .srclist{display:flex;flex-direction:column;gap:8px}
+  .src{display:flex;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:10px;cursor:pointer;background:var(--bg2)}
+  .src.sel{border-color:var(--emerald);background:rgba(34,197,94,.06)}
+  .src .si{width:34px;height:34px;border-radius:8px;background:var(--panel2);display:grid;place-items:center;font-size:16px}
+  .src b{font-size:13px;display:block}.src small{color:var(--muted);font-size:11.5px}
+  .stacks{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  @media(max-width:980px){.stacks{grid-template-columns:repeat(2,1fr)}}
+  .stack{border:1px solid var(--line);border-radius:10px;padding:12px;cursor:pointer;background:var(--bg2);position:relative}
+  .stack.sel{border-color:var(--emerald);background:rgba(34,197,94,.06)}
+  .stack b{font-size:12.5px}.stack small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+  .stack .rad{position:absolute;top:10px;right:10px;width:14px;height:14px;border-radius:50%;border:1.5px solid var(--dim)}
+  .stack.sel .rad{border-color:var(--emerald);background:radial-gradient(circle,var(--emerald) 40%,transparent 46%)}
+  .btn{background:var(--emerald);color:#04110a;border:none;border-radius:9px;padding:11px 18px;font-size:13.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+  .btn:hover{background:var(--emerald2)}.btn.big{width:100%;justify-content:center;padding:14px}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);font-weight:600}
+  .btn.ghost:hover{background:var(--panel2)}.btn:disabled{opacity:.5;cursor:not-allowed}
+  .chkrow{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);cursor:pointer}
+  .chk{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--dim);display:grid;place-items:center;font-size:11px}
+  .chk.on{background:var(--emerald);border-color:var(--emerald);color:#04110a}
+  .stages{display:flex;flex-direction:column;gap:2px;margin-bottom:14px}
+  .stage{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:7px;font-size:13px}
+  .stage .st{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);flex-shrink:0;display:grid;place-items:center;font-size:10px}
+  .stage.done .st{background:var(--emerald);border-color:var(--emerald);color:#04110a}
+  .stage.active{background:var(--panel2)}
+  .stage.active .st{border-color:var(--emerald);border-top-color:transparent;animation:spin .8s linear infinite}
+  .stage.pending{color:var(--dim)}@keyframes spin{to{transform:rotate(360deg)}}
+  .console{background:var(--term);border:1px solid var(--termln);border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:12px;line-height:1.7;height:320px;overflow:auto;overflow-wrap:break-word;white-space:pre-wrap;color:#e7edee;width:100%;box-sizing:border-box;flex-shrink:0}
+  .console .ct{color:var(--dim)}.console .ok{color:var(--emerald)}.console .warn{color:var(--amber)}
+  .console .err{color:var(--red)}.console .lvinfo{color:var(--blue)}.console .m{color:var(--ink)}.console .t{color:var(--dim)}
+  .progress{height:6px;background:var(--panel2);border-radius:99px;overflow:hidden;margin:4px 0 14px}
+  .progress .bar{height:100%;background:linear-gradient(90deg,var(--emerald),var(--teal));width:0;transition:width .4s}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:600}
+  .chip.running{background:rgba(59,130,246,.14);color:var(--blue)}.chip.queued{background:rgba(245,158,11,.14);color:var(--amber)}
+  .chip.done{background:rgba(34,197,94,.14);color:var(--emerald)}.chip.failed{background:rgba(239,68,68,.14);color:var(--red)}
+  .band{display:inline-block;padding:3px 12px;border-radius:99px;font-weight:700;font-size:12px}
+  .band.small{background:rgba(34,197,94,.15);color:var(--emerald)}.band.medium{background:rgba(245,158,11,.15);color:var(--amber)}.band.large{background:rgba(239,68,68,.15);color:var(--red)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+  th{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);font-weight:600}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono)}
+  tr.click{cursor:pointer}tr.click:hover td{background:var(--panel2)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px}
+  .kpi .lbl{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim)}
+  .kpi .val{font-size:28px;font-weight:800;letter-spacing:-.6px;font-variant-numeric:tabular-nums;margin-top:2px}
+  .hero{background:linear-gradient(135deg,#0f766e,#0891b2);border-radius:var(--r);padding:22px 24px;margin-bottom:16px}
+  .hero .lbl{opacity:.85;font-size:11.5px;text-transform:uppercase;letter-spacing:.5px}
+  .hero .big{font-size:34px;font-weight:800;letter-spacing:-1px;margin-top:3px}
+  .hero .note{opacity:.9;font-size:12.5px;margin-top:8px;max-width:720px}
+  .empty{color:var(--muted);font-size:13px;text-align:center;padding:40px}
+  .covers{color:var(--muted);font-size:11.5px}a{color:var(--emerald)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .pill{font-size:10.5px;padding:2px 8px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .banner{font-size:12px;color:var(--amber);background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);padding:8px 12px;border-radius:8px;margin-bottom:14px}
+  .exgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  @media(max-width:820px){.exgrid{grid-template-columns:1fr}}
+  .ex{border:1px solid var(--line);border-radius:9px;padding:10px 12px;cursor:pointer;background:var(--bg2)}
+  .ex:hover{border-color:var(--emerald)}
+  .ex b{font-size:12.5px;display:block}.ex small{color:var(--muted);font-size:11px;display:block;margin-top:2px}
+  .ex .tags{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}
+  .tg{font-size:10px;padding:1px 7px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .wizstep{margin-top:16px}
+  .wizhdr{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:8px}
+  .wiznum{width:20px;height:20px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);display:grid;place-items:center;font-size:11px;color:var(--muted)}
+  .wizreq{font-size:10px;padding:1px 8px;border-radius:99px;background:rgba(59,130,246,.14);color:var(--blue)}
+  .wizopt{font-size:10px;padding:1px 8px;border-radius:99px;background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+  .stack.none-opt{opacity:.85}
+  /* Multi-step wizard */
+  .stepper{display:flex;align-items:center;gap:0;margin-bottom:16px;flex-wrap:wrap}
+  .stepitem{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12.5px;font-weight:600}
+  .stepitem .dot{width:24px;height:24px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font-size:11px;background:var(--bg2);transition:.2s}
+  .stepitem.active{color:var(--ink)}
+  .stepitem.active .dot{border-color:var(--emerald);color:var(--emerald)}
+  .stepitem.done{color:var(--muted)}
+  .stepitem.done .dot{background:var(--emerald);border-color:var(--emerald);color:#04110a}
+  .stepitem.clickable{cursor:pointer}
+  .stepline{flex:1;height:2px;background:var(--line);margin:0 10px;min-width:18px}
+  .stepline.done{background:var(--emerald)}
+  .wizcard{min-height:300px}
+  .steptitle{font-size:16px;margin:0 0 3px;display:flex;align-items:center;gap:10px}
+  .stepsub{color:var(--muted);font-size:12.5px;margin:0 0 16px}
+  .steperr{color:var(--red);font-size:12px;margin:8px 0 0;min-height:14px}
+  .wiznav{display:flex;align-items:center;gap:10px;margin-top:16px}
+  .reviewgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+  .revcard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .revcard .rk{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim)}
+  .revcard .rv{font-size:15px;font-weight:700;margin-top:4px;word-break:break-word}
+  .revcard .rv.mono{font-family:var(--mono);font-size:12.5px;font-weight:500}
+  .revcard.off{opacity:.55}
+  .revcard .rv.off{color:var(--dim);font-weight:500}
+  /* Scope selection cards */
+  .scopegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+  .scopecard{border:1px solid var(--line);border-radius:12px;padding:16px;cursor:pointer;background:var(--bg2);position:relative;transition:.15s}
+  .scopecard:hover{border-color:#2f3a3f}
+  .scopecard.on{border-color:var(--emerald);background:rgba(34,197,94,.06)}
+  .scopecard .si{font-size:22px}
+  .scopecard b{display:block;font-size:14px;margin-top:8px}
+  .scopecard small{display:block;color:var(--muted);font-size:12px;margin-top:4px;line-height:1.45}
+  .scopecard .chk{position:absolute;top:14px;right:14px;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--dim);display:grid;place-items:center;font-size:12px;color:transparent}
+  .scopecard.on .chk{background:var(--emerald);border-color:var(--emerald);color:#04110a}
+  /* Chip rows (sub-options) */
+  .chiprow{display:flex;gap:8px;flex-wrap:wrap}
+  .chip2{padding:7px 13px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);cursor:pointer;font-size:12.5px;font-weight:600;color:var(--muted)}
+  .chip2:hover{border-color:#2f3a3f;color:var(--ink)}
+  .chip2.on{border-color:var(--emerald);background:rgba(34,197,94,.08);color:var(--emerald)}
+  /* Modernization plan card */
+  .plangrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  .plancard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:13px 15px;border-left:3px solid var(--emerald)}
+  .plancard.excl{border-left-color:var(--dim);opacity:.6}
+  .plancard .pl{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px}
+  .plancard .pv{font-size:12.5px;color:var(--muted);margin-top:5px;font-family:var(--mono);word-break:break-word}
+  .planchips .tg{cursor:default}
+  /* Detailed UCP breakdown (Excel-style) */
+  .ucpx table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  .ucpx th,.ucpx td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  .ucpx th{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .ucpx td.n,.ucpx th.n{text-align:right;font-family:var(--mono);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .ucpx .code{font-family:var(--mono);font-weight:700;color:var(--emerald)}
+  .ucpx .nm{font-weight:650}
+  .ucpx .ds{color:var(--muted);font-size:12px;line-height:1.45;margin-top:2px;display:block}
+  .ucpx tr.sub td{background:color-mix(in srgb,var(--emerald) 8%,transparent);font-weight:700}
+  .ucpx .rate{display:inline-block;min-width:20px;text-align:center;padding:1px 6px;border-radius:6px;
+    background:var(--panel2,rgba(127,127,127,.12));border:1px solid var(--line);font-family:var(--mono);font-size:12px}
+  .ucpx .grand{margin-top:14px;padding:14px 18px;border-radius:12px;border:1px solid var(--emerald);
+    background:linear-gradient(90deg,rgba(34,197,94,.10),rgba(8,145,178,.07));font-size:14px;font-weight:700;
+    display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .ucpx .grand .eq{font-family:var(--mono);color:var(--muted);font-weight:500;font-size:12.5px}
+  .ucpx h3{font-size:14px;margin:22px 0 2px;display:flex;align-items:center;gap:8px}
+  .ucpx h3:first-of-type{margin-top:6px}
+  .ucpx h3 .f{font-family:var(--mono);font-size:11.5px;color:var(--muted);font-weight:500}
+  .ucpx .lead{font-size:12.5px;color:var(--muted);margin:2px 0 0}
+  /* UCP tabs */
+  .ucptabs{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 4px;border-bottom:1px solid var(--line);padding-bottom:0}
+  .ucptab{appearance:none;border:1px solid transparent;border-bottom:none;background:transparent;cursor:pointer;
+    color:var(--muted);font-size:13px;font-weight:650;padding:9px 15px;border-radius:9px 9px 0 0;position:relative;top:1px}
+  .ucptab:hover{color:var(--fg,#111)}
+  .ucptab.on{color:var(--emerald);background:var(--panel2,rgba(34,197,94,.06));border-color:var(--line);border-bottom:1px solid var(--panel,#fff)}
+  .ucptab .cnt{font-family:var(--mono);font-size:11px;opacity:.7;margin-left:5px}
+  .ucppanel{display:none;padding-top:6px}
+  .ucppanel.on{display:block}
+  /* rating scale legend */
+  .ratekey{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);
+    background:var(--panel2,rgba(127,127,127,.06));border:1px solid var(--line);border-radius:10px;padding:9px 13px;margin:4px 0 10px}
+  .ratekey b{color:var(--emerald)}
+  .ratekey .sc{display:inline-flex;gap:4px;align-items:center}
+  .ratekey .sc i{width:16px;height:16px;border-radius:4px;display:grid;place-items:center;font-style:normal;
+    font-family:var(--mono);font-size:10px;font-weight:700;border:1px solid var(--line)}
+  .ucpx .rate.max{color:var(--muted);opacity:.65}
+  .ucpx .rate.neg{color:var(--red)}
+  .dmcard .band{margin-left:6px}
+  .dmwhy{font-size:12px;color:var(--muted);margin-top:2px;display:block}
+  .dmpick{color:var(--emerald);font-weight:700}
+  /* Continue-to-UCP action bar */
+  .ucpbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    margin-top:16px;padding:16px 20px;border:1px solid var(--line);border-radius:12px;
+    background:linear-gradient(90deg,rgba(34,197,94,.06),rgba(8,145,178,.05))}
+  .ucpbar-txt{font-size:13.5px;color:var(--muted)}
+  .ucpbar .btn{font-size:14px;padding:12px 20px}
+  /* Run proof */
+  .proofgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:12px}
+  .proofcard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
+  .proofcard .pl{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim)}
+  .proofcard .pv{font-size:24px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums;color:var(--emerald)}
+  .proofcard .ps{font-size:11px;color:var(--muted)}
+  .livepill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--emerald);background:rgba(34,197,94,.12);padding:3px 11px;border-radius:99px}
+  .livepill::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--emerald);box-shadow:0 0 8px var(--emerald)}
+  .liveurl{font-family:var(--mono);font-size:13px;color:var(--emerald);text-decoration:none}
+  .liveurl:hover{text-decoration:underline}
+  /* Provider cards (Settings) */
+  .provgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+  .provcard{position:relative;border:1px solid var(--line);border-radius:11px;padding:14px 16px;cursor:pointer;background:var(--bg2)}
+  .provcard:hover{border-color:#2f3a3f}
+  .provcard.sel{border-color:var(--emerald);background:rgba(34,197,94,.06)}
+  .provcard b{display:block;font-size:13.5px;margin-top:6px}
+  .provcard small{display:block;color:var(--muted);font-size:11.5px;margin-top:3px;line-height:1.4}
+  .provcard .rad{position:absolute;top:12px;right:12px;width:15px;height:15px;border-radius:50%;border:1.5px solid var(--dim)}
+  .provcard.sel .rad{border-color:var(--emerald);background:radial-gradient(circle,var(--emerald) 42%,transparent 48%)}
+  /* Artifact tabs */
+  .arttabs{display:flex;gap:4px;flex-wrap:wrap;margin:14px 0}
+  .arttab{padding:8px 13px;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--muted);border:1px solid transparent;background:var(--panel)}
+  .arttab:hover{color:var(--ink);border-color:var(--line)}
+  .arttab.active{background:var(--panel2);color:var(--emerald);border-color:var(--line)}
+  .arttab .badge{margin-left:6px;font-size:10.5px;background:var(--bg2);border:1px solid var(--line);border-radius:99px;padding:0 6px;color:var(--muted)}
+  .dtable{width:100%;border-collapse:collapse;font-size:12.5px}
+  .dtable th{position:sticky;top:0;background:var(--panel)}
+  .dtable td{font-family:var(--mono);font-size:12px}
+  .dtable td.plain{font-family:inherit}
+  .method{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:5px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .artscroll{max-height:460px;overflow:auto}
+  .taglist{display:flex;gap:6px;flex-wrap:wrap}
+  .notelist{margin:0;padding-left:18px;font-size:13px;line-height:1.9}
+  .kv{display:grid;grid-template-columns:180px 1fr;gap:6px 14px;font-size:13px}
+  .kv .k{color:var(--muted)}
+  /* Stat cards (Revive-style) */
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin:14px 0}
+  .statcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .statcard .sl{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim)}
+  .statcard .sv{font-size:28px;font-weight:800;letter-spacing:-.6px;color:var(--emerald);margin:3px 0 2px;font-variant-numeric:tabular-nums}
+  .statcard .ss{font-size:11px;color:var(--muted)}
+  /* Catalog (deep per-file) */
+  .catfile{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--bg2);overflow:hidden}
+  .catfile summary{cursor:pointer;padding:10px 13px;font-family:var(--mono);font-size:12px;display:flex;align-items:center;gap:10px;list-style:none}
+  .catfile summary::-webkit-details-marker{display:none}
+  .catfile summary:hover{background:var(--panel2)}
+  .catfile summary .cc{margin-left:auto;display:flex;gap:5px;flex-wrap:wrap}
+  .catfile .body{padding:6px 14px 12px;border-top:1px solid var(--line)}
+  .catsec{margin-top:10px}
+  .catsec .ct{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin-bottom:4px}
+  .catsec .cl{font-family:var(--mono);font-size:11.5px;color:var(--ink);line-height:1.7;word-break:break-word}
+  .cbadge{font-size:10px;padding:1px 6px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  /* LLM Agents */
+  .agentcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:12px;display:flex;gap:14px;align-items:flex-start}
+  .agentcard .ai{width:40px;height:40px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);display:grid;place-items:center;font-size:19px;flex-shrink:0}
+  .agentcard .an{font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .agentcard .ad{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.5}
+  .agentcard .ameta{font-size:11.5px;color:var(--dim);margin-top:8px;display:flex;gap:14px;flex-wrap:wrap}
+  .astat{font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:99px}
+  .astat.active{background:rgba(34,197,94,.15);color:var(--emerald)}
+  .astat.fallback{background:rgba(245,158,11,.15);color:var(--amber)}
+  .astat.planned{background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+  .astat.deterministic{background:rgba(59,130,246,.15);color:var(--blue)}
+  .agentcard.clk{cursor:pointer;transition:.15s}
+  .agentcard.clk:hover{border-color:var(--emerald)}
+  .agentcard .chev{margin-left:auto;color:var(--dim);align-self:center;font-size:18px}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:50;padding:24px}
+  .modalcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;max-width:640px;width:100%;max-height:88vh;overflow:auto}
+</style>
+</head>
+<body>
+<aside>
+  <div class="brand"><div class="logo">CM</div><div><b>Code Modernisation</b><span>AgentCore · CoreOps</span></div></div>
+  <div class="navlbl">Pipeline</div>
+  <div class="nav active" data-view="ingest"><i>📥</i><span class="t">Ingest</span></div>
+  <div class="nav" data-view="artifacts"><i>📦</i><span class="t">Artifacts</span></div>
+  <div class="nav" data-view="result"><i>📐</i><span class="t">UCP &amp; Pricing</span></div>
+  <div class="navlbl">Build · Stage 2</div>
+  <div class="nav" data-view="revive"><i>♻️</i><span class="t">Revive</span></div>
+  <div class="nav" data-view="pixel"><i>🎨</i><span class="t">UI Pixel-Clone</span></div>
+  <div class="nav" data-view="legacy"><i>🏗️</i><span class="t">Legacy Transform</span></div>
+  <div class="navlbl" id="navlbl_intel">Intelligence</div>
+  <div class="nav" id="nav_agents" data-view="agents"><i>🤖</i><span class="t">LLM Agents</span></div>
+  <div class="navlbl">Config · Controls</div>
+  <div class="nav" data-view="jobs"><i>⚙️</i><span class="t">Jobs</span></div>
+  <div class="nav" id="nav_settings" data-view="settings"><i>🔑</i><span class="t">Settings</span></div>
+</aside>
+<main>
+  <div class="top">
+    <div class="icn" id="topicn">📥</div>
+    <div><h1 id="toptitle">Ingest</h1><div class="sub" id="topsub">Connect a repository, run it, and size it in UCP</div></div>
+    <div class="online" id="online">System Online</div>
+    <button class="themebtn" id="themeBtn" title="Toggle light / dark">🌙</button>
+  </div>
+  <div class="content">
+
+    <!-- INGEST -->
+    <section class="view active" id="v-ingest">
+      <div id="ai_banner" class="banner" style="display:none"></div>
+
+      <!-- Stepper -->
+      <div class="stepper" id="stepper"></div>
+
+      <div class="card wizcard">
+        <!-- Source -->
+        <div class="wstep" data-step="source">
+          <h2 class="steptitle">Where does the code live?</h2>
+          <p class="stepsub">Choose a source, then point us at it.</p>
+          <div class="grid2" style="grid-template-columns:280px 1fr">
+            <div class="srclist" id="srclist"></div>
+            <div>
+              <h2 id="src_title" style="font-size:13.5px">Local Folder</h2>
+              <p class="hint" id="src_desc">Point to a path the backend can read. It is sandboxed to the allowed roots below.</p>
+              <label class="fld" id="src_label">Folder path on the server</label>
+              <input type="text" id="src_path" placeholder="/workspace/legacy-app"/>
+              <p class="hint" id="roots" style="margin-top:8px">Allowed roots: …</p>
+              <p class="steperr" id="src_err"></p>
+              <div id="local_examples" style="display:none;margin-top:14px">
+                <label class="fld">⭐ Starter examples — boot-ready, click to load</label>
+                <div id="local_examplelist" class="exgrid"></div>
+              </div>
+              <div id="examples" style="display:none;margin-top:14px">
+                <label class="fld">Example public repos — click to load</label>
+                <div id="examplelist" class="exgrid"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scope -->
+        <div class="wstep" data-step="scope" hidden>
+          <h2 class="steptitle">What do you want to modernize?</h2>
+          <p class="stepsub">Pick the layers in scope — each is independent. Select at least one. You'll configure only what you enable.</p>
+          <div class="scopegrid" id="scopegrid"></div>
+          <p class="steperr" id="scope_err"></p>
+        </div>
+
+        <!-- Frontend -->
+        <div class="wstep" data-step="frontend" hidden>
+          <h2 class="steptitle">Frontend rebuild</h2>
+          <p class="stepsub">The UI layer your app will be rebuilt on.</p>
+          <label class="fld">Framework</label>
+          <div class="stacks" id="wz_fe_fw"></div>
+          <label class="fld" style="margin-top:16px">Styling</label>
+          <div class="chiprow" id="wz_fe_style"></div>
+          <label class="fld" style="margin-top:16px">State management</label>
+          <div class="chiprow" id="wz_fe_state"></div>
+        </div>
+
+        <!-- Backend -->
+        <div class="wstep" data-step="backend" hidden>
+          <h2 class="steptitle">Backend rebuild</h2>
+          <p class="stepsub">The server / API layer.</p>
+          <label class="fld">Framework</label>
+          <div class="stacks" id="wz_be_fw"></div>
+          <label class="fld" style="margin-top:16px">API style</label>
+          <div class="chiprow" id="wz_be_api"></div>
+          <label class="fld" style="margin-top:16px">Authentication</label>
+          <div class="chiprow" id="wz_be_auth"></div>
+        </div>
+
+        <!-- Database migration -->
+        <div class="wstep" data-step="database" hidden>
+          <h2 class="steptitle">Database migration</h2>
+          <p class="stepsub">Migrate the data store. Source is auto-detected from the scan unless you override it.</p>
+          <div class="grid2">
+            <div>
+              <label class="fld">Source engine</label>
+              <select id="wz_db_source" style="width:100%;background:var(--bg2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:10px 12px;font-size:13.5px"></select>
+            </div>
+            <div>
+              <label class="fld">Target engine</label>
+              <div class="stacks" id="wz_db_target"></div>
+            </div>
+          </div>
+          <label class="fld" style="margin-top:16px">Migration strategy</label>
+          <div class="chiprow" id="wz_db_strategy"></div>
+          <label class="fld" style="margin-top:16px">Scope</label>
+          <div class="chiprow" id="wz_db_scope"></div>
+        </div>
+
+        <!-- Review -->
+        <div class="wstep" data-step="review" hidden>
+          <h2 class="steptitle">Review &amp; launch</h2>
+          <p class="stepsub">Confirm the modernization plan — this starts a real job.</p>
+          <div class="reviewgrid" id="reviewgrid"></div>
+          <div class="chkrow" id="llmtoggle" style="margin-top:16px"><span class="chk on" id="llmchk">✓</span> Enable LLM stages (mapping / gap-filler agents)</div>
+          <div class="chkrow" id="revivetoggle" style="margin-top:10px"><span class="chk" id="revivechk"></span> ⚡ Revive: boot the app in containers &amp; crawl it — proves it runs (needs Docker + a compose file)</div>
+          <p class="hint" id="revive_note" style="margin-top:6px;display:none;color:var(--amber)"></p>
+        </div>
+      </div>
+
+      <!-- Nav -->
+      <div class="wiznav">
+        <button class="btn ghost" id="backBtn" disabled>← Back</button>
+        <div style="flex:1"></div>
+        <button class="btn" id="nextBtn">Next →</button>
+        <button class="btn" id="connectBtn" style="display:none">Connect &amp; Continue &nbsp;→</button>
+      </div>
+    </section>
+
+    <!-- CONSOLE -->
+    <section class="view" id="v-console">
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <div><h2 id="job_title" style="font-size:15px">Job —</h2><p class="hint" id="job_meta" style="margin:2px 0 0"></p></div>
+          <span class="chip running" id="job_chip">running</span>
+        </div>
+        <div class="progress" style="margin-top:14px"><div class="bar" id="job_bar"></div></div>
+        <div class="stages" id="job_stages"></div>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:10px">
+          <h2 style="margin:0">Process log</h2>
+          <div class="row"><button class="btn" id="viewResultBtn" disabled>View artifacts →</button></div>
+        </div>
+        <div class="console" id="console"></div>
+      </div>
+    </section>
+
+    <!-- JOBS -->
+    <section class="view" id="v-jobs">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <h2 style="margin:0">Jobs</h2><button class="btn ghost" onclick="go('ingest')">＋ New ingest</button>
+        </div>
+        <table><thead><tr><th>Job</th><th>Source</th><th>Target</th><th>Status</th><th>Stage</th><th class="num">UCP</th><th class="num">Band</th><th class="num">Started</th></tr></thead><tbody id="jobs_tbody"></tbody></table>
+        <div class="empty" id="jobs_empty">No jobs yet.</div>
+      </div>
+    </section>
+
+    <!-- ARTIFACTS -->
+    <section class="view" id="v-artifacts">
+      <div id="art_empty" class="card"><div class="empty">No completed job yet. Run an ingest to produce artifacts.</div></div>
+      <div id="art_body" style="display:none">
+        <div class="card">
+          <h2 style="margin:0" id="art_title">Artifacts</h2><p class="hint" id="art_sub" style="margin:2px 0 0">Detailed outputs captured from the ingested codebase</p>
+        </div>
+        <div class="card" id="art_plan" style="display:none"></div>
+        <div class="card" id="art_revive" style="display:none"></div>
+        <div class="arttabs" id="arttabs"></div>
+        <div class="card" id="artpanel"><div class="empty">…</div></div>
+        <div class="ucpbar">
+          <div class="ucpbar-txt">Reviewed the artifacts? Size &amp; price this codebase next.</div>
+          <button class="btn" id="toUcpBtn">Continue to UCP &amp; Pricing →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RESULT -->
+    <section class="view" id="v-result">
+      <div id="result_empty" class="card"><div class="empty">No completed job yet. Run an ingest to compute UCP points.</div></div>
+      <div id="result_body" style="display:none">
+        <div class="hero">
+          <div class="lbl">Points of work · <span id="r_source"></span></div>
+          <div class="big"><span id="r_ucp">—</span> UCP · <span id="r_band">—</span></div>
+          <div class="note">Standard UCP = UUCP × TCF × ECF, computed from the ingested codebase. Migration workload: <b id="r_dm">—</b>. <span class="pill" id="r_aimode">—</span></div>
+        </div>
+        <div class="card"><h2>Sizing breakdown</h2>
+          <div class="kpis">
+            <div class="kpi"><div class="lbl">UUCP <span class="info" data-tip="Unadjusted Use Case Points — the raw size from actors (UAW) + use cases (UUCW), before any adjustment. UUCP = UAW + UUCW.">ⓘ</span></div><div class="val" id="r_uucp">—</div></div>
+            <div class="kpi"><div class="lbl">TCF <span class="info" data-tip="Technical Complexity Factor — how technically hard the system is. Weighted score of 13 factors (distributed, security, performance, concurrency…). TCF = 0.60 + 0.01 × Σweighted. Range ≈ 0.60–1.35; >1 pushes size UP.">ⓘ</span></div><div class="val" id="r_tcf">—</div></div>
+            <div class="kpi"><div class="lbl">ECF <span class="info" data-tip="Environmental Complexity Factor — how favorable the team/project environment is. Weighted score of 8 factors (experience, motivation, stable requirements…). ECF = 1.40 − 0.03 × Σweighted. Note the minus: a MORE capable environment gives a LOWER ECF and reduces effort.">ⓘ</span></div><div class="val" id="r_ecf">—</div></div>
+            <div class="kpi"><div class="lbl">UCP <span class="info" data-tip="Use Case Points — the final adjusted size. UCP = UUCP × TCF × ECF. RFE bands: Small ≤200 · Medium ≤1000 · Large >1000.">ⓘ</span></div><div class="val" id="r_ucp2">—</div></div>
+            <div class="kpi"><div class="lbl">Migration <span class="info" data-tip="Data-migration complexity band (Small / Medium / Large) from the highest applicable category across data volume, source systems, tables, transforms, CDC & MDM. Drives the per-TB rate.">ⓘ</span></div><div class="val"><span class="band" id="r_dmband">—</span></div></div>
+          </div>
+          <p class="hint" id="r_rationale" style="margin-top:14px"></p>
+        </div>
+        <div id="ucp_detail"></div>
+        <div class="grid2">
+          <div class="card"><h2>Discovered metrics <span class="pill">from static scan</span></h2><table><tbody id="r_metrics"></tbody></table></div>
+          <div class="card">
+            <div class="row" style="justify-content:space-between;align-items:flex-start">
+              <div><h2>Estimated pricing</h2><p class="hint" style="margin:2px 0 0">Rates come from <b>Settings → Pricing</b>, matched to this job's bands.</p></div>
+              <button class="btn ghost" id="editRatesBtn">Edit rates →</button>
+            </div>
+            <table style="margin-top:12px">
+              <tr><td>App Modernization rate (₹/UCP, <span id="r_bandlbl">—</span>)</td><td class="num" id="p_ucprate_disp" style="font-family:var(--mono)">—</td></tr>
+              <tr><td>Data size (TB)</td><td class="num"><input type="number" id="p_tb" value="1" step="0.1" style="width:120px"/></td></tr>
+              <tr><td>Data Migration rate (₹/TB, <span id="r_dmlbl">—</span>)</td><td class="num" id="p_tbrate_disp" style="font-family:var(--mono)">—</td></tr>
+              <tr style="font-weight:700"><td>Estimated Work-Order Value (excl. tax)</td><td class="num" id="p_total" style="color:var(--emerald)">₹0</td></tr>
+            </table>
+            <p class="hint" id="p_ratewarn" style="color:var(--amber);display:none;margin-top:10px"></p>
+          </div>
+        </div>
+        <div class="ucpbar">
+          <div class="ucpbar-txt" id="finalise_txt">Sizing &amp; pricing locked in? Finalise to unlock <b>Stage 2 — Build</b>, starting with <b>Revive</b>.</div>
+          <button class="btn" id="finaliseBtn">Finalise &amp; proceed to Revive →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" id="v-settings">
+      <div class="card">
+        <h2>AI provider</h2>
+        <p class="hint">Choose which engine runs the mapping / gap-filler / reviving agents. Keys are stored on the server (0600, git-ignored) and never returned to the browser in full.</p>
+        <label class="fld">Active provider</label>
+        <div class="provgrid" id="provpick"></div>
+        <p class="hint" id="prov_warn" style="display:none;color:var(--amber);margin-top:12px;font-weight:600"></p>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <h2>OpenAI</h2>
+          <label class="fld">API key</label>
+          <input type="password" autocomplete="off" id="oa_key" placeholder="sk-…"/>
+          <label class="fld" style="margin-top:10px">Model</label>
+          <input type="text" id="oa_model" placeholder="gpt-4o"/>
+        </div>
+        <div class="card">
+          <h2>AWS Bedrock</h2>
+          <div class="grid2" style="gap:10px">
+            <div><label class="fld">Access key ID</label><input type="text" id="br_ak" placeholder="AKIA…"/></div>
+            <div><label class="fld">Region</label><input type="text" id="br_region" placeholder="us-east-1"/></div>
+          </div>
+          <label class="fld" style="margin-top:10px">Secret access key</label>
+          <input type="password" autocomplete="off" id="br_sk" placeholder="Enter secret access key"/>
+          <label class="fld" style="margin-top:10px">Model ID</label>
+          <input type="text" id="br_model" placeholder="anthropic.claude-3-5-sonnet-20240620-v1:0"/>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Anthropic <span style="color:var(--muted);font-weight:400;font-size:12px">(optional)</span></h2>
+        <div class="grid2" style="gap:10px">
+          <div><label class="fld">API key</label><input type="password" autocomplete="off" id="an_key" placeholder="sk-ant-…"/></div>
+          <div><label class="fld">Model</label><input type="text" id="an_model" placeholder="claude-sonnet-5"/></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>💰 Pricing — cost per UCP point <span style="color:var(--muted);font-weight:400;font-size:12px">— applied automatically on the UCP &amp; Pricing screen</span></h2>
+        <p class="hint">Set your quoted rates once, by RFE band. The result screen picks the rate that matches each job's computed band. Per-TB migration rates are optional.</p>
+        <div class="grid2">
+          <div>
+            <label class="fld">Cost per UCP (by application-size band)</label>
+            <table>
+              <tr><td><span class="band small">Small</span> ≤ 200 UCP</td><td class="num"><input type="number" id="pr_ucp_Small" value="0" min="0" style="width:130px"/></td></tr>
+              <tr><td><span class="band medium">Medium</span> ≤ 1000 UCP</td><td class="num"><input type="number" id="pr_ucp_Medium" value="0" min="0" style="width:130px"/></td></tr>
+              <tr><td><span class="band large">Large</span> &gt; 1000 UCP</td><td class="num"><input type="number" id="pr_ucp_Large" value="0" min="0" style="width:130px"/></td></tr>
+            </table>
+          </div>
+          <div>
+            <label class="fld">Cost per migration TB (by data band)</label>
+            <table>
+              <tr><td><span class="band small">Small</span> ≤ 1 TB</td><td class="num"><input type="number" id="pr_tb_Small" value="0" min="0" style="width:130px"/></td></tr>
+              <tr><td><span class="band medium">Medium</span> &gt; 1 to 5 TB</td><td class="num"><input type="number" id="pr_tb_Medium" value="0" min="0" style="width:130px"/></td></tr>
+              <tr><td><span class="band large">Large</span> &gt; 5 TB</td><td class="num"><input type="number" id="pr_tb_Large" value="0" min="0" style="width:130px"/></td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <label class="fld" style="margin:0">Currency symbol</label>
+          <input type="text" id="pr_currency" value="₹" maxlength="4" style="width:70px;text-align:center"/>
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="btn" id="saveSettings">Save settings</button>
+        <button class="btn ghost" id="testProvider">Test active provider</button>
+        <span id="settings_status" style="font-size:13px;font-weight:600"></span>
+      </div>
+      <p class="hint" style="margin-top:12px">A secret shown as <code>••••1234</code> is already stored — leave it untouched to keep it, or type a new value to replace it.</p>
+    </section>
+
+    <!-- LLM AGENTS -->
+    <section class="view" id="v-agents">
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <div><h2 style="margin:0">Agent pipeline</h2><p class="hint" style="margin:2px 0 0">Every agent that runs across an ingest → size job, and what powers it.</p></div>
+          <span class="pill" id="agents_engine">engine: —</span>
+        </div>
+      </div>
+      <div id="agentgrid"></div>
+    </section>
+
+    <!-- STAGE 2 · REVIVE -->
+    <section class="view" id="v-revive">
+      <div id="revive_lock" class="card"><div class="empty">🔒 Finalise <b>UCP &amp; Pricing</b> for a job to unlock Stage 2.</div></div>
+      <div id="revive_body" style="display:none">
+        <div class="card">
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
+            <div><h2 style="margin:0">♻️ Revive <span class="pill">Revive Agent · run-any-codebase</span></h2>
+            <p class="hint" style="margin:4px 0 0">Boot the ingested app in containers. When the build fails, the agent self-heals it (LLM fixes the Dockerfile/compose) and retries — asking you before applying. The live URL then feeds the UI-clone step.</p></div>
+            <div class="row"><button class="btn" id="reviveBootBtn">⚡ Boot app</button><button class="btn ghost" id="reviveStopBtn2" style="display:none">Stop</button></div>
+          </div>
+          <div id="revive_stats" style="display:none;margin-top:10px"></div>
+
+          <div id="revive_lanes_wrap" style="display:none;margin-top:16px">
+            <div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin-bottom:6px">Section 1 &middot; Processing</div>
+            <div id="revive_lanes"></div>
+          </div>
+
+          <div id="revive_tokens_wrap" style="display:none;margin-top:16px">
+            <div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin-bottom:6px">Section 2 &middot; Token Usage</div>
+            <div id="revive_tokens"></div>
+          </div>
+
+          <div id="revive_proof_wrap" style="display:none;margin-top:16px">
+            <div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin-bottom:6px">Section 3 &middot; Details</div>
+            <div id="revive_proof"></div>
+          </div>
+
+          <div id="revive_logs_wrap" style="display:none;margin-top:16px">
+            <div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin-bottom:6px">Logs</div>
+            <div class="console" id="revive_console" style="height:200px"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- STAGE 2 · UI PIXEL-CLONE -->
+    <section class="view" id="v-pixel">
+      <div id="pixel_lock" class="card"><div class="empty">🔒 Finalise <b>UCP &amp; Pricing</b> for a job to unlock Stage 2 build skills.</div></div>
+      <div id="pixel_body" style="display:none">
+        <div class="card">
+          <h2>🎨 UI Pixel-Clone <span class="pill">skill: pixel-clone</span></h2>
+          <p class="hint">Recreate a pixel-perfect React+Tailwind clone of the running app — proven by screenshot diffing. Answer the skill's questions; we generate the launch plan.</p>
+          <div class="bootbar" id="bootbar">
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:700">Step 1 · the app must be running</div>
+              <div class="hint" id="boot_status" style="margin:2px 0 0">Boot the ingested app (Docker) — its live URL then auto-fills below.</div>
+            </div>
+            <button class="btn" id="bootBtn">⚡ Boot app (Revive)</button>
+            <button class="btn ghost" id="bootStopBtn" style="display:none">Stop</button>
+          </div>
+          <div class="console" id="boot_console" style="height:150px;display:none;margin-bottom:14px"></div>
+          <div id="pixel_form"></div>
+          <div class="row" style="margin-top:14px">
+            <button class="btn ghost" id="pixel_gen">Generate launch plan</button>
+            <button class="btn" id="pixel_run">▶ Run Pixel-Clone agent</button>
+          </div>
+        </div>
+        <div class="card" id="pixel_out" style="display:none"></div>
+        <div class="card" id="pixel_run_panel" style="display:none"></div>
+      </div>
+    </section>
+
+    <!-- STAGE 2 · LEGACY TRANSFORM -->
+    <section class="view" id="v-legacy">
+      <div id="legacy_lock" class="card"><div class="empty">🔒 Finalise <b>UCP &amp; Pricing</b> for a job to unlock Stage 2 build skills.</div></div>
+      <div id="legacy_body" style="display:none">
+        <div class="card">
+          <h2>🏗️ Legacy Transform <span class="pill">skill: legacy-transform</span></h2>
+          <p class="hint">Rewrite the legacy app on a modern stack, running parallel on the same live DB with proven data parity. Answer the skill's questions; we generate the launch plan.</p>
+          <div id="legacy_form"></div>
+          <div class="row" style="margin-top:14px">
+            <button class="btn ghost" id="legacy_gen">Generate launch plan</button>
+            <button class="btn" id="legacy_run">▶ Run schema analysis (live)</button>
+          </div>
+        </div>
+        <div class="card" id="legacy_out" style="display:none"></div>
+        <div class="card" id="legacy_run_panel" style="display:none"></div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- Agent detail modal -->
+<div class="modal" id="agentModal" style="display:none">
+  <div class="modalcard">
+    <div class="row" style="justify-content:space-between;align-items:flex-start">
+      <div class="an" id="am_title" style="font-size:16px"></div>
+      <button class="themebtn" id="am_close" title="Close">✕</button>
+    </div>
+    <p class="ad" id="am_desc" style="margin:8px 0 0"></p>
+    <div class="ameta" id="am_io" style="margin-top:8px"></div>
+    <div style="margin-top:16px">
+      <div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin-bottom:6px">How it works</div>
+      <ul class="notelist" id="am_details" style="font-size:12.5px"></ul>
+    </div>
+    <div id="am_promptwrap" style="margin-top:16px;display:none">
+      <div class="row" style="justify-content:space-between">
+        <label class="fld" style="margin:0">System prompt <span id="am_promptnote" class="pill"></span></label>
+      </div>
+      <textarea id="am_prompt" rows="9" style="width:100%;margin-top:8px;background:var(--term);color:#e7edee;border:1px solid var(--termln);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:12px;line-height:1.6;resize:vertical"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="am_save">Save prompt</button>
+        <button class="btn ghost" id="am_reset">Reset to default</button>
+        <span id="am_status" style="font-size:12.5px;font-weight:600"></span>
+      </div>
+    </div>
+    <div id="am_noprompt" class="hint" style="margin-top:16px;display:none">This agent runs deterministic code — it has no editable prompt.</div>
+  </div>
+</div>
+
+<!-- Agent Chatbot -->
+<div id="chatFab" title="Assistant">💬<span id="chatBadge">0</span></div>
+<div id="chatPanel">
+  <div class="chathead">
+    <div style="display:flex;align-items:center;gap:8px"><b>Assistant</b>
+      <select id="chatJobSel" class="chatjobsel" title="Which job/process this assistant is scoped to"></select>
+    </div>
+    <button class="themebtn" id="chatClose" style="width:28px;height:28px">✕</button>
+  </div>
+  <div id="chatDemoNote" style="display:none;padding:8px 12px;font-size:12px;color:var(--amber);background:rgba(245,158,11,.08);border-bottom:1px solid var(--line)">🔒 The AI Assistant's free-text answers are not available in this Demo version — slash commands like /revive and /pixel-clone still work.</div>
+  <div class="chatbody" id="chatBody"></div>
+  <div class="chatinput">
+    <input type="text" id="chatText" placeholder="Ask, or /revive · /pixel-clone · /help" autocomplete="off"/>
+    <button class="btn" id="chatSend">Send</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const fmt=n=>(Math.round(n*100)/100).toLocaleString('en-IN',{maximumFractionDigits:2});
+const inr=n=>'₹'+Math.round(n).toLocaleString('en-IN');
+const api=(u,o)=>fetch(u,o).then(r=>r.json());
+
+// ---- Theme (light / dark) ----
+function applyTheme(t){
+  document.documentElement.dataset.theme=t;
+  try{localStorage.setItem('cm_theme',t);}catch(e){}
+  const b=$('themeBtn'); if(b)b.textContent=t==='light'?'☀️':'🌙';
+}
+(function(){
+  let t;try{t=localStorage.getItem('cm_theme');}catch(e){}
+  if(!t)t=(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';
+  applyTheme(t);
+})();
+$('themeBtn').onclick=()=>applyTheme(document.documentElement.dataset.theme==='light'?'dark':'light');
+
+const SOURCES=[['local','📁','Local Folder','Browse filesystem path'],['pubgit','🌐','Public Git Repo','GitHub, GitLab, Bitbucket'],['privgit','🔒','Private Git Repo','Requires authentication'],['archive','🗜️','Upload Archive','.zip, .tar.gz files']];
+const EXAMPLES=[
+  ['Django REST · RealWorld','django-realworld-example-app','https://github.com/gothinkster/django-realworld-example-app.git',['Django','DRF','API']],
+  ['React · RealWorld SPA','react-redux-realworld-example-app','https://github.com/gothinkster/react-redux-realworld-example-app.git',['React','Redux']],
+  ['Spring Boot · PetClinic','spring-petclinic','https://github.com/spring-projects/spring-petclinic.git',['Java','Spring']],
+  ['Flask · RealWorld','flask-realworld-example-app','https://github.com/gothinkster/flask-realworld-example-app.git',['Flask','Python']],
+  ['Node/Express · RealWorld','node-express-realworld-example-app','https://github.com/gothinkster/node-express-realworld-example-app.git',['Express','Node']],
+  ['FastAPI + React · Full-stack','full-stack-fastapi-template','https://github.com/fastapi/full-stack-fastapi-template.git',['FastAPI','React','PG']],
+];
+// ---- Modernization scope + per-layer options ----
+const SCOPES=[
+  ['frontend','🎨','Frontend','Rebuild the UI layer on a modern component framework.'],
+  ['backend','⚙️','Backend','Rebuild the server / API layer on a modern framework.'],
+  ['database','🗄️','Database migration','Migrate the data store to a new engine, schema and/or data.'],
+];
+const FE_FW=[['React','Component SPA'],['Vue','Progressive SPA'],['Angular','Enterprise TS'],['Next.js','React SSR'],['Svelte','Compiled UI'],['Blazor','C# WebAssembly']];
+const FE_STYLE=['Tailwind','CSS Modules','MUI','Bootstrap','styled-components','Plain CSS'];
+const FE_STATE=['Redux Toolkit','Zustand','Context API','TanStack Query','None'];
+const BE_FW=[['Django (DRF)','Batteries-included REST'],['FastAPI','Modern async Python'],['Flask','Python micro'],['Spring Boot','Enterprise Java'],['NestJS','Structured TS on Node'],['ASP.NET Core','Microsoft C#'],['Go (Gin)','High-throughput'],['Node/Express','Minimal JS server']];
+const BE_API=['REST','GraphQL','gRPC'];
+const BE_AUTH=['Preserve existing','JWT','OAuth2 / OIDC','Session','SAML'];
+const DB_ENGINES=['auto-detect','MySQL','PostgreSQL','Oracle','SQL Server','MongoDB','SQLite','MariaDB'];
+const DB_TARGET=[['PostgreSQL','Relational · default'],['MySQL','Relational'],['SQL Server','Microsoft RDBMS'],['MongoDB','Document store'],['SQLite','Embedded'],['MariaDB','MySQL-compatible']];
+const DB_STRATEGY=['Schema + data','Schema only','Data only','Dual-write / strangler'];
+const DB_SCOPE=['Full migration','Read-replica first','Incremental / phased'];
+
+let selSource='local',llmOn=true,CFG={},DEMO_MODE=false;
+function applyDemoMode(){
+  DEMO_MODE=!!CFG.demo_mode;
+  if(!DEMO_MODE)return;
+  selSource='pubgit';
+  ['nav_agents','navlbl_intel','nav_settings'].forEach(id=>{const el=$(id);if(el)el.style.display='none';});
+  const chatNote=$('chatDemoNote');
+  if(chatNote)chatNote.style.display='block';
+}
+let scope={frontend:true,backend:true,database:false};
+let target={
+  frontend:{framework:'React',styling:'Tailwind',state:'Redux Toolkit'},
+  backend:{framework:'Django (DRF)',api:'REST',auth:'Preserve existing'},
+  database:{source:'auto-detect',target:'PostgreSQL',strategy:'Schema + data',scope:'Full migration'},
+};
+
+function visibleSources(){
+  return DEMO_MODE ? SOURCES.filter(s=>s[0]==='pubgit') : SOURCES;
+}
+function renderSources(){
+  $('srclist').innerHTML=visibleSources().map(s=>`<div class="src ${s[0]===selSource?'sel':''}" data-s="${s[0]}"><div class="si">${s[1]}</div><div><b>${s[2]}</b><small>${s[3]}</small></div></div>`).join('');
+  document.querySelectorAll('.src').forEach(el=>el.onclick=()=>{selSource=el.dataset.s;applySource();renderSources();});
+}
+function applySource(){
+  const isGit = selSource==='pubgit'||selSource==='privgit';
+  $('src_title').textContent=SOURCES.find(x=>x[0]===selSource)[2];
+  $('src_label').textContent=isGit?'Repository URL':'Folder path on the server';
+  $('src_desc').textContent=DEMO_MODE?'This Demo version only accepts one of the pre-established public example repos below — pick one to load it.':
+    (isGit?'Public https git URL on GitHub / GitLab / Bitbucket. It is shallow-cloned into a sandboxed temp dir, then scanned.':'Point to a path the backend can read. It is sandboxed to the allowed roots below.');
+  $('src_path').placeholder=isGit?'https://github.com/org/repo.git':'/path/to/your/project';
+  $('roots').style.display=isGit?'none':'block';
+  $('examples').style.display=(selSource==='pubgit')?'block':'none';
+  $('local_examples').style.display=(selSource==='local'&&!DEMO_MODE)?'block':'none';
+  // Demo mode: the URL field is just a hidden data holder for whichever
+  // example card was clicked -- typing a value there isn't a real option, so
+  // don't show a field that looks like it accepts free text.
+  $('src_label').style.display=DEMO_MODE?'none':'block';
+  $('src_path').style.display=DEMO_MODE?'none':'block';
+  $('src_path').readOnly=DEMO_MODE;
+}
+let LOCAL_EXAMPLES=[];
+async function renderLocalExamples(){
+  if(!LOCAL_EXAMPLES.length){try{const d=await api('/api/examples');LOCAL_EXAMPLES=d.examples||[];}catch(e){}}
+  $('local_examplelist').innerHTML=LOCAL_EXAMPLES.map((e,i)=>`<div class="ex" data-i="${i}"><b>${esc2(e.name)}</b><small>${esc2(e.note)}</small><div class="tags">${(e.stack||[]).map(t=>`<span class="tg">${esc2(t)}</span>`).join('')}</div></div>`).join('')||'<div class="hint">No bundled examples found.</div>';
+  document.querySelectorAll('#local_examplelist .ex').forEach(el=>el.onclick=()=>{$('src_path').value=LOCAL_EXAMPLES[+el.dataset.i].path;});
+}
+function renderExamples(){
+  $('examplelist').innerHTML=EXAMPLES.map((e,i)=>`<div class="ex" data-i="${i}"><b>${e[0]}</b><small>${e[2].replace('https://','')}</small><div class="tags">${e[3].map(t=>`<span class="tg">${t}</span>`).join('')}</div></div>`).join('');
+  document.querySelectorAll('.ex').forEach(el=>el.onclick=()=>{$('src_path').value=EXAMPLES[+el.dataset.i][2];});
+}
+// ---- scope + option renderers ----
+function stackCards(elId,list,cur,onpick){
+  $(elId).innerHTML=list.map(o=>`<div class="stack ${cur===o[0]?'sel':''}" data-v="${o[0]}"><div class="rad"></div><b>${o[0]}</b><small>${o[1]}</small></div>`).join('');
+  document.querySelectorAll('#'+elId+' .stack').forEach(el=>el.onclick=()=>{onpick(el.dataset.v);});
+}
+function chipRow(elId,list,cur,onpick){
+  $(elId).innerHTML=list.map(o=>`<div class="chip2 ${cur===o?'on':''}" data-v="${o}">${o}</div>`).join('');
+  document.querySelectorAll('#'+elId+' .chip2').forEach(el=>el.onclick=()=>{onpick(el.dataset.v);});
+}
+function renderScope(){
+  $('scopegrid').innerHTML=SCOPES.map(s=>`<div class="scopecard ${scope[s[0]]?'on':''}" data-k="${s[0]}"><div class="chk">✓</div><div class="si">${s[1]}</div><b>${s[2]}</b><small>${s[3]}</small></div>`).join('');
+  document.querySelectorAll('#scopegrid .scopecard').forEach(el=>el.onclick=()=>{scope[el.dataset.k]=!scope[el.dataset.k];renderScope();renderStepper();$('scope_err').textContent='';});
+}
+function renderLayers(){
+  stackCards('wz_fe_fw',FE_FW,target.frontend.framework,v=>{target.frontend.framework=v;renderLayers();});
+  chipRow('wz_fe_style',FE_STYLE,target.frontend.styling,v=>{target.frontend.styling=v;renderLayers();});
+  chipRow('wz_fe_state',FE_STATE,target.frontend.state,v=>{target.frontend.state=v;renderLayers();});
+  stackCards('wz_be_fw',BE_FW,target.backend.framework,v=>{target.backend.framework=v;renderLayers();});
+  chipRow('wz_be_api',BE_API,target.backend.api,v=>{target.backend.api=v;renderLayers();});
+  chipRow('wz_be_auth',BE_AUTH,target.backend.auth,v=>{target.backend.auth=v;renderLayers();});
+  $('wz_db_source').innerHTML=DB_ENGINES.map(e=>`<option ${target.database.source===e?'selected':''}>${e}</option>`).join('');
+  $('wz_db_source').onchange=e=>{target.database.source=e.target.value;};
+  stackCards('wz_db_target',DB_TARGET,target.database.target,v=>{target.database.target=v;renderLayers();});
+  chipRow('wz_db_strategy',DB_STRATEGY,target.database.strategy,v=>{target.database.strategy=v;renderLayers();});
+  chipRow('wz_db_scope',DB_SCOPE,target.database.scope,v=>{target.database.scope=v;renderLayers();});
+}
+function renderIngest(){renderSources();applySource();renderExamples();renderLocalExamples();renderScope();renderLayers();showStep(step);}
+$('llmtoggle').onclick=()=>{llmOn=!llmOn;$('llmchk').classList.toggle('on',llmOn);$('llmchk').textContent=llmOn?'✓':'';};
+let reviveOn=false;
+$('revivetoggle').onclick=()=>{
+  reviveOn=!reviveOn;$('revivechk').classList.toggle('on',reviveOn);$('revivechk').textContent=reviveOn?'✓':'';
+  const n=$('revive_note');
+  if(reviveOn && CFG && !CFG.boot_enabled){n.style.display='block';n.textContent='⚠ Server has boot disabled — start it with CODEINTEL_ALLOW_BOOT=1 for revive to actually run. It will be skipped otherwise.';}
+  else n.style.display='none';
+};
+
+// ---- Dynamic multi-step wizard ----
+function buildSteps(){
+  const s=[['source','Source'],['scope','Scope']];
+  if(scope.frontend)s.push(['frontend','Frontend']);
+  if(scope.backend)s.push(['backend','Backend']);
+  if(scope.database)s.push(['database','Database']);
+  s.push(['review','Review']);
+  return s;
+}
+let step=0;
+function steps(){return buildSteps();}
+function renderStepper(){
+  const S=steps(),parts=[];
+  S.forEach((s,i)=>{
+    const cls=i===step?'active':i<step?'done':'';
+    const clickable=i<step?'clickable':'';
+    parts.push(`<div class="stepitem ${cls} ${clickable}" data-i="${i}"><div class="dot">${i<step?'✓':i+1}</div>${s[1]}</div>`);
+    if(i<S.length-1)parts.push(`<div class="stepline ${i<step?'done':''}"></div>`);
+  });
+  $('stepper').innerHTML=parts.join('');
+  document.querySelectorAll('.stepitem.clickable').forEach(el=>el.onclick=()=>gotoStep(+el.dataset.i));
+}
+function showStep(i){
+  const S=steps();
+  step=Math.max(0,Math.min(S.length-1,i));
+  const key=S[step][0];
+  document.querySelectorAll('.wstep').forEach(el=>el.hidden=(el.dataset.step!==key));
+  $('backBtn').disabled=(step===0);
+  const last=(step===S.length-1);
+  $('nextBtn').style.display=last?'none':'inline-flex';
+  $('connectBtn').style.display=last?'inline-flex':'none';
+  if(last)renderReview();
+  renderStepper();
+}
+function validateStep(){
+  const key=steps()[step][0];
+  $('src_err').textContent='';$('scope_err').textContent='';
+  if(key==='source'){
+    const v=$('src_path').value.trim();
+    const isGit=(selSource==='pubgit'||selSource==='privgit');
+    if(!v){$('src_err').textContent=isGit?'Enter a repository URL (or pick an example).':'Enter a folder path on the server.';return false;}
+    if(isGit && !v.startsWith('https://')){$('src_err').textContent='Git URL must start with https://';return false;}
+  }
+  if(key==='scope' && !scope.frontend && !scope.backend && !scope.database){
+    $('scope_err').textContent='Select at least one layer to modernize.';return false;
+  }
+  return true;
+}
+function gotoStep(i){ if(i<=step||validateStep()) showStep(i); }
+$('nextBtn').onclick=()=>{ if(validateStep()){ renderStepper(); showStep(step+1); } };
+$('backBtn').onclick=()=>showStep(step-1);
+function renderReview(){
+  const rows=[
+    ['Source type',SOURCES.find(x=>x[0]===selSource)[2],false],
+    ['Source',$('src_path').value.trim()||'(none)',true],
+  ];
+  // Frontend
+  rows.push(['Frontend', scope.frontend?`${target.frontend.framework} · ${target.frontend.styling} · ${target.frontend.state}`:'— not in scope —', false, !scope.frontend]);
+  rows.push(['Backend', scope.backend?`${target.backend.framework} · ${target.backend.api} · ${target.backend.auth}`:'— not in scope —', false, !scope.backend]);
+  rows.push(['Database migration', scope.database?`${target.database.source} → ${target.database.target} · ${target.database.strategy}`:'— not in scope —', false, !scope.database]);
+  $('reviewgrid').innerHTML=rows.map(r=>`<div class="revcard ${r[3]?'off':''}"><div class="rk">${r[0]}</div><div class="rv ${r[2]?'mono':''} ${r[3]?'off':''}">${esc2(r[1])}</div></div>`).join('');
+}
+
+let POLL=null, CURRENT=null;
+// ---- Modernization plan (shared across Review / Artifacts / Jobs) ----
+function planLayers(stack){
+  if(!stack||typeof stack!=='object')return [];
+  const sc=stack.scope||{}; const out=[];
+  if(sc.frontend&&stack.frontend){const f=stack.frontend;out.push({icon:'🎨',label:'Frontend',detail:`${f.framework} · ${f.styling} · ${f.state}`});}
+  if(sc.backend&&stack.backend){const b=stack.backend;out.push({icon:'⚙️',label:'Backend',detail:`${b.framework} · ${b.api} · ${b.auth}`});}
+  if(sc.database&&stack.database){const d=stack.database;out.push({icon:'🗄️',label:'Database',detail:`${d.source} → ${d.target} · ${d.strategy} · ${d.scope}`});}
+  return out;
+}
+function planChipsHtml(stack){
+  const layers=planLayers(stack);
+  if(!layers.length)return '<span class="covers">—</span>';
+  return `<span class="planchips" style="display:flex;gap:5px;flex-wrap:wrap">`+
+    layers.map(l=>`<span class="tg" title="${esc2(l.detail)}">${l.icon} ${esc2(l.label)}</span>`).join('')+`</span>`;
+}
+function renderPlanCard(stack){
+  const el=$('art_plan'); if(!el)return;
+  const layers=planLayers(stack);
+  if(!layers.length){el.style.display='none';return;}
+  el.style.display='block';
+  el.innerHTML=`<h2 style="margin:0 0 10px;font-size:14px">🚀 Modernization plan <span style="color:var(--muted);font-weight:400;font-size:12px">— target the rebuild produces</span></h2>`+
+    `<div class="plangrid">`+layers.map(l=>`<div class="plancard"><div class="pl">${l.icon} ${esc2(l.label)}</div><div class="pv">${esc2(l.detail)}</div></div>`).join('')+`</div>`;
+}
+function renderReviveCard(job){
+  const el=$('art_revive'); if(!el)return;
+  const r=job.revive_result;
+  if(!r){el.style.display='none';return;}
+  el.style.display='block';
+  if(r.status==='running'){
+    const up=r.started?new Date(r.started).toLocaleString():'—';
+    el.innerHTML=`<div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div><h2 style="margin:0;font-size:14px">⚡ Run proof <span class="livepill">LIVE</span></h2>
+        <p class="hint" style="margin:4px 0 0">The app was booted in containers and crawled — it actually runs.</p></div>
+        <button class="btn ghost" id="reviveStopBtn" data-j="${job.id}">Stop app</button></div>
+      <div class="proofgrid">
+        <div class="proofcard"><div class="pl">Status</div><div class="pv">Running</div><div class="ps">since ${esc2(up)}</div></div>
+        <div class="proofcard"><div class="pl">Live URL</div><div class="pv" style="font-size:15px"><a class="liveurl" href="${esc2(r.url)}" target="_blank">${esc2(r.url)}</a></div><div class="ps">port ${r.port}</div></div>
+        <div class="proofcard"><div class="pl">Pages working</div><div class="pv">${r.pages_working}/${r.pages_total}</div><div class="ps">crawled routes</div></div>
+        <div class="proofcard"><div class="pl">Containers</div><div class="pv">${r.containers}</div><div class="ps">docker compose</div></div>
+      </div>
+      ${(r.api_routes||[]).length?`<div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin:16px 0 6px">Runtime-verified endpoints <span class="pill">via ${esc2(r.api_source||'OpenAPI')}</span></div>
+        <p class="hint" style="margin:0 0 8px">The running app's <b>actual</b> route table — ground truth, not a regex estimate. Runtime: <b style="color:var(--emerald)">${r.api_routes.length}</b> · static estimate was <b>${r.static_endpoints||0}</b>.</p>
+        ${dtable(['Method','Path'],r.api_routes.slice(0,60).map(e=>`<tr><td><span class="method">${esc2(e.method)}</span></td><td>${esc2(e.path)}</td></tr>`))}`:''}`;
+    const btn=el.querySelector('#reviveStopBtn');
+    if(btn)btn.onclick=async()=>{btn.disabled=true;btn.textContent='Stopping…';await api('/api/jobs/'+btn.dataset.j+'/revive/stop',{method:'POST'});btn.textContent='Stopped';};
+  } else {
+    const cls=r.status==='skipped'?'planned':'failed';
+    const label=r.status==='skipped'?'Skipped':r.status==='running_no_http'?'Booted (no HTTP)':'Failed';
+    el.innerHTML=`<h2 style="margin:0;font-size:14px">⚡ Run proof <span class="astat ${cls}">${label}</span></h2>
+      <p class="hint" style="margin:6px 0 0">${esc2(r.reason||'Containers came up but no HTTP endpoint responded.')}</p>`;
+  }
+}
+function stackLabel(s){
+  if(!s)return '—';
+  if(typeof s==='string')return s;
+  const parts=planLayers(s).map(l=>l.label==='Database'?('DB→'+(s.database.target)):s[l.label.toLowerCase()].framework);
+  return parts.join(' · ')||'—';
+}
+$('connectBtn').onclick=async()=>{
+  const source=$('src_path').value.trim()||$('src_path').placeholder;
+  const source_type=(selSource==='pubgit'||selSource==='privgit')?'git':'local';
+  const stack={scope:{...scope},
+    frontend:scope.frontend?{...target.frontend}:null,
+    backend:scope.backend?{...target.backend}:null,
+    database:scope.database?{...target.database}:null};
+  $('connectBtn').disabled=true;$('connectBtn').textContent='Starting…';
+  try{
+    const job=await api('/api/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,source_type,stack,use_llm:llmOn,revive:reviveOn})});
+    if(job.error){alert(job.error);return;}
+    openConsole(job.id);
+  }finally{$('connectBtn').disabled=false;$('connectBtn').textContent='Connect & Continue  →';}
+};
+
+async function openConsole(jid){
+  CURRENT=jid;
+  const job=await api('/api/jobs/'+jid);
+  $('job_title').textContent='Job '+job.id;
+  $('job_meta').textContent=`${job.source}  →  ${stackLabel(job.stack)}${job.use_llm?'  · LLM stages on':''}`;
+  $('console').innerHTML='';$('job_bar').style.width='0%';
+  $('viewResultBtn').disabled=job.status!=='done';
+  renderStages(job.stages||[], job.stage, job.progress);
+  go('console');
+  let cursor=0;
+  clearInterval(POLL);
+  const tick=async()=>{
+    const d=await api(`/api/jobs/${jid}/logs?cursor=${cursor}`);
+    d.lines.forEach(l=>{
+      $('console').innerHTML+=`<span class="t">[${l.t}]</span> <span class="${lvClass(l.level)}">${esc(l.msg)}</span>\n`;
+    });
+    if(d.lines.length){$('console').scrollTop=$('console').scrollHeight;cursor=d.cursor;}
+    $('job_bar').style.width=(d.progress||0)+'%';
+    setChip(d.status);
+    renderStages(job.stages||[], d.stage, d.progress);
+    if(d.status==='done'||d.status==='failed'){
+      clearInterval(POLL);
+      $('viewResultBtn').disabled=d.status!=='done';
+      if(d.status==='done'){ await loadArtifacts(jid); }
+      loadJobs();
+    }
+  };
+  tick(); POLL=setInterval(tick, 700);
+}
+function renderStages(stages, current, progress){
+  const done=Math.floor((progress||0)/100*stages.length);
+  $('job_stages').innerHTML=stages.map((s,i)=>{
+    const cls = s===current&&progress<100 ? 'active' : (i<done||progress>=100?'done':'pending');
+    const mark = cls==='done'?'✓':'';
+    return `<div class="stage ${cls}"><div class="st">${mark}</div><div>${s}</div></div>`;
+  }).join('');
+}
+function setChip(st){const c=$('job_chip');c.className='chip '+st;c.textContent=st;}
+$('viewResultBtn').onclick=()=>{loadArtifacts(CURRENT).then(()=>go('artifacts'));};
+
+// ---- Detailed, Excel-style UCP breakdown with per-line-item descriptions ----
+const UCP_ACTORS=[
+  {k:'simple', w:1, nm:'Simple actor', ds:'Another system that interacts through a defined API / programmatic interface.'},
+  {k:'average',w:2, nm:'Average actor', ds:'Another system interacting through a network protocol (TCP/IP, database, LDAP, message queue).'},
+  {k:'complex',w:3, nm:'Complex actor', ds:'A human user interacting through a graphical user interface.'},
+];
+const UCP_UC=[
+  {k:'simple', w:5, nm:'Simple use case', ds:'≤ 3 transactions/steps, a simple UI, and it touches at most one data entity.'},
+  {k:'average',w:10,nm:'Average use case', ds:'4–7 transactions, several screens, and it involves two or more data entities.'},
+  {k:'complex',w:15,nm:'Complex use case', ds:'More than 7 transactions, a complex UI and business rules, spanning many entities.'},
+];
+const TCF_F=[
+  {c:'T1', w:2,  nm:'Distributed system', ds:'Is the system distributed across multiple nodes / tiers rather than running on one machine?'},
+  {c:'T2', w:1,  nm:'Performance objectives', ds:'Are response-time or throughput targets a critical, explicit requirement?'},
+  {c:'T3', w:1,  nm:'End-user efficiency', ds:'Is online efficiency for the end user (fast, streamlined interaction) important?'},
+  {c:'T4', w:1,  nm:'Complex internal processing', ds:'How complex is the internal computation and business logic the system performs?'},
+  {c:'T5', w:1,  nm:'Reusable code', ds:'Must the code be designed for reuse across other applications or contexts?'},
+  {c:'T6', w:0.5,nm:'Easy to install', ds:'Is ease of installation / deployment an explicit requirement?'},
+  {c:'T7', w:0.5,nm:'Easy to use', ds:'Is operational ease-of-use a stated priority for the system?'},
+  {c:'T8', w:2,  nm:'Portable', ds:'Must the system be portable across different platforms or environments?'},
+  {c:'T9', w:1,  nm:'Easy to change', ds:'Must the system be easy to modify, configure or extend after delivery?'},
+  {c:'T10',w:1,  nm:'Concurrent use', ds:'Does the system need to support concurrent / simultaneous multi-user access?'},
+  {c:'T11',w:1,  nm:'Special security', ds:'Are special security features (RBAC, encryption, LDAP/SSO, MFA) required?'},
+  {c:'T12',w:1,  nm:'Third-party access', ds:'Does the system provide direct access for third parties / external integrations?'},
+  {c:'T13',w:1,  nm:'User training', ds:'Are special end-user training facilities required for the system?'},
+];
+const ECF_F=[
+  {c:'E1', w:1.5, nm:'Familiarity with process', ds:'Team familiarity with the development process / project domain. Higher = more favourable.'},
+  {c:'E2', w:0.5, nm:'Application experience', ds:'Team’s experience with this kind of application. Higher = more favourable.'},
+  {c:'E3', w:1,   nm:'Object-oriented experience', ds:'Team’s OO analysis & design experience. Higher = more favourable.'},
+  {c:'E4', w:0.5, nm:'Lead analyst capability', ds:'Capability of the lead analyst on the project. Higher = more favourable.'},
+  {c:'E5', w:1,   nm:'Motivation', ds:'Motivation level of the project team. Higher = more favourable.'},
+  {c:'E6', w:2,   nm:'Stable requirements', ds:'How stable the requirements are. Higher = more favourable, less rework.'},
+  {c:'E7', w:-1,  nm:'Part-time staff', ds:'Proportion of part-time staff. Negative weight — a higher rating RAISES effort.'},
+  {c:'E8', w:-1,  nm:'Difficult programming language', ds:'Difficulty of the programming language. Negative weight — a higher rating RAISES effort.'},
+];
+function _n(x){return (Math.round(x*100)/100).toLocaleString('en-IN');}
+const RATE_MAX=5;
+const RATEKEY=`<div class="ratekey"><span>Rating scale <b>0–${RATE_MAX}</b> (max ${RATE_MAX}):</span>
+  <span class="sc"><i>0</i> irrelevant</span><span class="sc"><i>3</i> average</span><span class="sc"><i>${RATE_MAX}</i> strong / maximum influence</span></div>`;
+function _rateChip(rt,neg){const r=Math.max(0,Math.min(RATE_MAX,rt));
+  return `<span class="rate${neg?' neg':''}">${rt}</span><span class="rate max"> / ${RATE_MAX}</span>`;}
+
+// Data-migration band — mirrors the backend _dm_band() logic exactly, shown as
+// per-driver rows so the user sees WHY the migration band is what it is.
+function dbMigration(m){
+  const models=m.models||0, legacy=m.legacy||[];
+  const BN={1:'Small',2:'Medium',3:'Large'};
+  const mysql=legacy.some(s=>/mysql/i.test(s));
+  const rows=[
+    {nm:'Schema size (data entities / tables)',
+     val: models+' entit'+(models===1?'y':'ies')+' detected',
+     rule:'≤ 50 → Small · 51–200 → Medium · > 200 → Large',
+     band: models>200?3:models>50?2:1},
+    {nm:'Legacy source migration in scope',
+     val: legacy.length? legacy.join(', ') : 'no legacy datastore signals',
+     rule:'Any legacy datastore being migrated → at least Medium',
+     band: legacy.length?2:1},
+    {nm:'High-volume legacy datastore',
+     val: (mysql?'MySQL':'no high-volume legacy DB') + (models>100?` · ${models} entities`:''),
+     rule:'Legacy MySQL with > 100 entities → Large',
+     band: (mysql && models>100)?3:1},
+  ];
+  const overall=Math.max(...rows.map(r=>r.band));
+  return {rows, overall, BN};
+}
+
+function renderUcpDetail(mapping, r, m){
+  const host=$('ucp_detail'); if(!host) return;
+  m=m||{};
+  if(!mapping||!mapping.uaw||!mapping.tcf){
+    host.innerHTML='<div class="card"><h2>Detailed UCP calculation</h2><p class="hint">This job was sized before the detailed breakdown was available — re-ingest to see the full line-by-line calculation.</p></div>';
+    return;
+  }
+  const uaw=mapping.uaw, uucw=mapping.uucw, tcf=mapping.tcf, ecf=mapping.ecf;
+  // Actors
+  let uawTot=0;
+  const aRows=UCP_ACTORS.map(a=>{const c=uaw[a.k]||0,wt=c*a.w;uawTot+=wt;
+    return `<tr><td><span class="nm">${a.nm}</span> <span class="rate">×${a.w}</span><span class="ds">${a.ds}</span></td><td class="n">${c}</td><td class="n">${a.w}</td><td class="n">${wt}</td></tr>`;}).join('');
+  // Use cases
+  let uucwTot=0;
+  const ucRows=UCP_UC.map(u=>{const c=uucw[u.k]||0,wt=c*u.w;uucwTot+=wt;
+    return `<tr><td><span class="nm">${u.nm}</span> <span class="rate">×${u.w}</span><span class="ds">${u.ds}</span></td><td class="n">${c}</td><td class="n">${u.w}</td><td class="n">${wt}</td></tr>`;}).join('');
+  const uucp=uawTot+uucwTot;
+  // TCF
+  let tf=0;
+  const tRows=TCF_F.map((f,i)=>{const rt=tcf[i]!=null?tcf[i]:0,wt=rt*f.w;tf+=wt;
+    return `<tr><td class="code">${f.c}</td><td><span class="nm">${f.nm}</span><span class="ds">${f.ds}</span></td><td class="n">${f.w}</td><td class="n">${_rateChip(rt)}</td><td class="n">${_n(wt)}</td></tr>`;}).join('');
+  const tcfV=0.60+0.01*tf;
+  // ECF
+  let ef=0;
+  const eRows=ECF_F.map((f,i)=>{const rt=ecf[i]!=null?ecf[i]:0,wt=rt*f.w;ef+=wt;
+    return `<tr><td class="code">${f.c}</td><td><span class="nm">${f.nm}</span><span class="ds">${f.ds}</span></td><td class="n">${f.w}</td><td class="n">${_rateChip(rt, f.w<0)}</td><td class="n">${_n(wt)}</td></tr>`;}).join('');
+  const ecfV=1.40-0.03*ef;
+  const ucp=uucp*tcfV*ecfV;
+  // DB migration — the AUTHORITATIVE band is r.dm_band (the mapping agent may
+  // raise it above the static signals). The driver rows are the static rationale.
+  const RANK={Small:1,Medium:2,Large:3};
+  const dm=dbMigration(m);
+  const dmBN=r.dm_band||dm.BN[dm.overall];            // authoritative, drives pricing
+  const heurBN=dm.BN[dm.overall];
+  const adjusted=(RANK[dmBN]||0)!==(RANK[heurBN]||0); // agent moved it off the heuristic
+  const dmRows=dm.rows.map(row=>{const bn=dm.BN[row.band];const drives=!adjusted && row.band===dm.overall && row.band>1;
+    return `<tr><td><span class="nm">${row.nm}</span><span class="ds">${row.rule}</span></td>
+      <td>${row.val}</td>
+      <td class="n"><span class="band ${bn.toLowerCase()}">${bn}</span>${drives?'<span class="dmwhy dmpick">↑ drives the band</span>':''}</td></tr>`;}).join('');
+  const dmNote=adjusted
+    ? `<p class="lead" style="margin-top:10px;color:var(--amber)">⚙ The mapping agent set the migration band to <b>${dmBN}</b> — ${RANK[dmBN]>RANK[heurBN]?'above':'below'} the static-scan signals (which alone suggest <b>${heurBN}</b>) — based on its rationale: “${(r.rationale||'—')}”. The <b>${dmBN}</b> band is what drives pricing.`
+    : '';
+
+  host.innerHTML=`<div class="card ucpx">
+    <h2>Detailed UCP calculation <span class="pill">line-by-line, per RFE Annexure 11</span></h2>
+    <p class="lead">Every input below is derived from the ingested codebase. This is the same computation as the NICSI UCP workbook — split into tabs so each part is easy to follow.</p>
+
+    <div class="ucptabs" id="ucptabs">
+      <button class="ucptab on" data-tab="size">Size <span class="cnt">UUCP</span></button>
+      <button class="ucptab" data-tab="tech">Technical · TCF <span class="cnt">${TCF_F.length}</span></button>
+      <button class="ucptab" data-tab="env">Environmental · ECF <span class="cnt">${ECF_F.length}</span></button>
+      <button class="ucptab" data-tab="db">Database Migration <span class="cnt">${dmBN}</span></button>
+    </div>
+
+    <div class="ucppanel on" data-panel="size">
+      <h3>1 · Unadjusted Actor Weight <span class="f">UAW = Σ (count × weight)</span></h3>
+      <table><thead><tr><th>Actor type</th><th class="n">Count</th><th class="n">Weight</th><th class="n">Weighted</th></tr></thead>
+        <tbody>${aRows}<tr class="sub"><td>Unadjusted Actor Weight (UAW)</td><td class="n"></td><td class="n"></td><td class="n">${_n(uawTot)}</td></tr></tbody></table>
+      <h3>2 · Unadjusted Use Case Weight <span class="f">UUCW = Σ (count × weight)</span></h3>
+      <table><thead><tr><th>Use case type</th><th class="n">Count</th><th class="n">Weight</th><th class="n">Weighted</th></tr></thead>
+        <tbody>${ucRows}<tr class="sub"><td>Unadjusted Use Case Weight (UUCW)</td><td class="n"></td><td class="n"></td><td class="n">${_n(uucwTot)}</td></tr></tbody></table>
+      <div class="grand"><span>Unadjusted Use Case Points (UUCP)</span><span class="eq">UUCP = UAW ${_n(uawTot)} + UUCW ${_n(uucwTot)}</span><span>${_n(uucp)}</span></div>
+    </div>
+
+    <div class="ucppanel" data-panel="tech">
+      <h3>Technical Complexity Factor <span class="f">TCF = 0.60 + 0.01 × Σ(rating × weight)</span></h3>
+      ${RATEKEY}
+      <table><thead><tr><th>#</th><th>Technical factor</th><th class="n">Weight</th><th class="n">Rating (of ${RATE_MAX})</th><th class="n">Weighted</th></tr></thead>
+        <tbody>${tRows}<tr class="sub"><td></td><td>Σ Technical factor (TFactor)</td><td class="n"></td><td class="n"></td><td class="n">${_n(tf)}</td></tr></tbody></table>
+      <div class="grand"><span>Technical Complexity Factor (TCF)</span><span class="eq">TCF = 0.60 + 0.01 × ${_n(tf)}</span><span>${_n(tcfV)}</span></div>
+    </div>
+
+    <div class="ucppanel" data-panel="env">
+      <h3>Environmental Complexity Factor <span class="f">ECF = 1.40 − 0.03 × Σ(rating × weight)</span></h3>
+      ${RATEKEY}
+      <p class="lead" style="margin-bottom:8px">Factors <b>E1–E6</b> have positive weights (a higher rating means a more capable environment → <b>lower</b> ECF → less effort). <b>E7–E8</b> have <span class="rate neg">negative</span> weights, so a higher rating <b>raises</b> effort.</p>
+      <table><thead><tr><th>#</th><th>Environmental factor</th><th class="n">Weight</th><th class="n">Rating (of ${RATE_MAX})</th><th class="n">Weighted</th></tr></thead>
+        <tbody>${eRows}<tr class="sub"><td></td><td>Σ Environmental factor (EFactor)</td><td class="n"></td><td class="n"></td><td class="n">${_n(ef)}</td></tr></tbody></table>
+      <div class="grand"><span>Environmental Complexity Factor (ECF)</span><span class="eq">ECF = 1.40 − 0.03 × ${_n(ef)}</span><span>${_n(ecfV)}</span></div>
+    </div>
+
+    <div class="ucppanel dmcard" data-panel="db">
+      <h3>Data-Migration Complexity <span class="f">band = highest applicable driver</span></h3>
+      <p class="lead" style="margin-bottom:8px">The migration band sets the <b>per-TB migration rate</b> on the pricing card. It is the <b>highest</b> band across the drivers below — each derived from the scanned schema and legacy signals.</p>
+      <table><thead><tr><th>Migration driver</th><th>Detected in this codebase</th><th class="n">Band</th></tr></thead>
+        <tbody>${dmRows}
+          <tr class="sub"><td>Data-Migration band (applied to pricing)</td><td></td><td class="n"><span class="band ${dmBN.toLowerCase()}">${dmBN}</span></td></tr></tbody></table>
+      ${dmNote}
+      <p class="lead" style="margin-top:10px">Data <b>volume</b> in TB is entered on the pricing card (right) and priced at the <b>${dmBN}</b> per-TB rate. Detected datastores: <b>${(m.integrations||[]).filter(x=>/sql|mongo|postgres|redis|oracle|db/i.test(x)).join(', ')|| (m.legacy||[]).join(', ') || 'none flagged'}</b>.</p>
+    </div>
+
+    <div class="grand" style="font-size:16px;margin-top:18px"><span>Use Case Points (UCP) — <span class="band ${r.band.toLowerCase()}">${r.band}</span></span><span class="eq">UUCP ${_n(uucp)} × TCF ${_n(tcfV)} × ECF ${_n(ecfV)}</span><span style="color:var(--emerald)">${_n(ucp)}</span></div>
+  </div>`;
+
+  const tabs=host.querySelector('#ucptabs');
+  tabs.addEventListener('click', e=>{
+    const b=e.target.closest('.ucptab'); if(!b) return;
+    tabs.querySelectorAll('.ucptab').forEach(x=>x.classList.toggle('on', x===b));
+    host.querySelectorAll('.ucppanel').forEach(p=>p.classList.toggle('on', p.dataset.panel===b.dataset.tab));
+  });
+}
+let VIEWJOB=null;   // the job the user is currently working with (artifacts / result)
+async function loadResult(jid){
+  const job=await api('/api/jobs/'+jid);
+  if(!job.result){return;}
+  VIEWJOB=jid; JOBSCACHE[jid]=job; setActive(jid);
+  if(job.continued)continuedJob=jid;
+  if(job.finalised)finalisedJob=jid;
+  updateNavLocks();
+  const r=job.result, m=job.metrics||{};
+  $('result_empty').style.display='none';$('result_body').style.display='block';
+  $('r_source').textContent=job.source;
+  $('r_ucp').textContent=fmt(r.ucp);$('r_ucp2').textContent=fmt(r.ucp);
+  $('r_band').textContent=r.band;$('r_dm').textContent=r.dm_band;
+  $('r_uucp').textContent=r.uucp;$('r_tcf').textContent=fmt(r.tcf);$('r_ecf').textContent=fmt(r.ecf);
+  const dmb=$('r_dmband');dmb.textContent=r.dm_band;dmb.className='band '+r.dm_band.toLowerCase();
+  $('r_bandlbl').textContent=r.band;$('r_dmlbl').textContent=r.dm_band;
+  $('r_aimode').textContent='mapping: '+(r.ai_mode||'—');
+  $('r_rationale').textContent=r.rationale||'';
+  const rows=[
+    ['Languages',(m.languages||[]).join(' · ')||'—'],
+    ['Frameworks',(m.frameworks||[]).join(' · ')||'—'],
+    ['Total LOC',(m.total_loc||0).toLocaleString()],
+    ['Source files',(m.file_count||0).toLocaleString()],
+    ['DB models (entities)',m.models||0],
+    ['API endpoints',m.endpoints||0],
+    ['API views',m.api_views||0],
+    ['UI pages',m.pages||0],
+    ['Integrations',(m.integrations||[]).join(', ')||'—'],
+    ['Auth',(m.auth||[]).join(', ')||'—'],
+    ['Legacy signals',(m.legacy||[]).join(', ')||'none'],
+  ];
+  $('r_metrics').innerHTML=rows.map(x=>`<tr><td class="covers">${x[0]}</td><td class="num">${x[1]}</td></tr>`).join('');
+  renderUcpDetail(job.mapping, r, m);
+  // Rates are sourced from Settings → Pricing, matched to this job's bands.
+  await loadPricing();
+  priceCalc();
+}
+async function loadPricing(){
+  try{const s=await api('/api/settings');if(s.pricing)PRICING=s.pricing;}catch(e){}
+}
+function priceCalc(){
+  const cur=PRICING.currency||'₹';
+  const rUcp=parseFloat($('r_ucp').textContent.replace(/,/g,''))||0;
+  const band=$('r_band').textContent, dmBand=$('r_dm').textContent;
+  const ur=(PRICING.ucp||{})[band]||0;
+  const tr=(PRICING.tb||{})[dmBand]||0;
+  const tb=+$('p_tb').value||0;
+  $('p_ucprate_disp').textContent=ur?cur+ur.toLocaleString('en-IN'):'not set';
+  $('p_tbrate_disp').textContent=tr?cur+tr.toLocaleString('en-IN'):'not set';
+  const total=rUcp*ur+tb*tr;
+  $('p_total').textContent=cur+Math.round(total).toLocaleString('en-IN');
+  const miss=[];
+  if(!ur)miss.push(band+' UCP');
+  if(!tr && tb>0)miss.push(dmBand+' TB');
+  const w=$('p_ratewarn');
+  if(miss.length){w.style.display='block';w.textContent='⚠ No rate set for: '+miss.join(', ')+'. Configure it in Settings → Pricing.';}
+  else w.style.display='none';
+}
+document.addEventListener('input',e=>{if(e.target.id==='p_tb')priceCalc();});
+document.addEventListener('click',e=>{if(e.target.id==='editRatesBtn')go('settings');});
+
+// ---- Artifacts (tabbed) ----
+let ARTJOB=null, artTab='overview';
+const esc2=s=>String(s==null?'':s).replace(/[\r\x00-\x08\x0b\x0c\x0e-\x1f]/g,'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+// Log-level -> CSS class. NOT a passthrough: the bare global `.info` rule (small
+// round tooltip-icon badge, display:inline-grid;width:14px) collides with the
+// log level named "info" and crushes log text into a 14px column. Rename only
+// at render time so it never hits that selector; the level string itself
+// (used by the backend/data model) stays "info".
+function lvClass(level){return level==='info' ? 'lvinfo' : level;}
+function dtable(head,rows){
+  if(!rows.length)return '<div class="empty">none detected</div>';
+  return `<div class="artscroll"><table class="dtable"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+}
+const ART_TABS=[
+  ['overview','Overview',a=>null,a=>{
+    const o=a.overview||{};
+    const langs=(o.languages||[]).map(l=>`<span class="tg">${l.lang} · ${l.loc.toLocaleString()} LOC</span>`).join(' ');
+    const stats=`<div class="statgrid" style="margin:0 0 18px">`+(a.stats||[]).map(s=>`<div class="statcard"><div class="sl">${esc2(s.label)}</div><div class="sv">${(s.value||0).toLocaleString()}</div><div class="ss">${esc2(s.sub)}</div></div>`).join('')+`</div>`;
+    return stats+`<div class="kv">
+      <div class="k">Root</div><div style="font-family:var(--mono);font-size:12px">${esc2(o.root)}</div>
+      <div class="k">Frameworks</div><div class="taglist">${(o.frameworks||[]).map(f=>`<span class="tg">${esc2(f)}</span>`).join('')}</div>
+      <div class="k">Languages</div><div class="taglist">${langs}</div>
+      <div class="k">Source files</div><div>${(o.file_count||0).toLocaleString()}</div>
+      <div class="k">Total LOC</div><div>${(o.total_loc||0).toLocaleString()}</div></div>`;
+  }],
+  ['structure','Structure',a=>(a.structure||[]).length,a=>dtable(['Directory','Files','LOC'],
+    (a.structure||[]).map(d=>`<tr><td>${esc2(d.dir)}</td><td>${d.files}</td><td>${d.loc.toLocaleString()}</td></tr>`))],
+  ['endpoints','Endpoints',a=>(a.endpoints||[]).length,a=>dtable(['Method','Path','File'],
+    (a.endpoints||[]).map(e=>`<tr><td><span class="method">${esc2(e.method)}</span></td><td>${esc2(e.path)}</td><td>${esc2(e.file)}</td></tr>`))],
+  ['models','Data Model',a=>(a.models||[]).length,a=>dtable(['Entity','Fields','File'],
+    (a.models||[]).map(m=>`<tr><td>${esc2(m.name)}</td><td>${m.fields}</td><td>${esc2(m.file)}</td></tr>`))],
+  ['ui','UI',a=>((a.ui||{}).pages||[]).length+((a.ui||{}).components||[]).length+((a.ui||{}).templates||[]).length,a=>{
+    const u=a.ui||{};
+    if(u.api_only){
+      return `<div class="banner" style="color:var(--blue);background:rgba(59,130,246,.08);border-color:rgba(59,130,246,.25);display:block">ℹ️ <b>API-only backend — no frontend layer in this repo.</b> No SPA pages, components or server-rendered templates were found. This is expected for a headless REST/GraphQL service (e.g. django-realworld pairs with a separate frontend repo). The Frontend rebuild scope would start from the API contract.</div>`;
+    }
+    let h='';
+    h+=`<h2 style="font-size:13px">Pages <span class="tg">${(u.pages||[]).length}</span></h2>`+
+      dtable(['Page','Kind','File'],(u.pages||[]).map(p=>`<tr><td>${esc2(p.name)}</td><td><span class="method">${esc2(p.kind||'page')}</span></td><td>${esc2(p.file)}</td></tr>`));
+    h+=`<h2 style="font-size:13px;margin-top:14px">Templates <span class="tg">${(u.templates||[]).length}</span></h2>`+
+      dtable(['Template','Kind','File'],(u.templates||[]).map(p=>`<tr><td>${esc2(p.name)}</td><td><span class="method">${esc2(p.kind||'template')}</span></td><td>${esc2(p.file)}</td></tr>`));
+    h+=`<h2 style="font-size:13px;margin-top:14px">Components <span class="tg">${(u.components||[]).length}</span></h2>`+
+      dtable(['Component','File'],(u.components||[]).map(p=>`<tr><td>${esc2(p.name)}</td><td>${esc2(p.file)}</td></tr>`));
+    return h;
+  }],
+  ['functions','Functions',a=>(a.functions||[]).length,a=>dtable(['Name','Kind','File'],
+    (a.functions||[]).map(f=>`<tr><td>${esc2(f.name)}</td><td><span class="method">${esc2(f.kind)}</span></td><td>${esc2(f.file)}</td></tr>`))],
+  ['classes','Classes',a=>(a.classes||[]).length,a=>dtable(['Class','File'],
+    (a.classes||[]).map(c=>`<tr><td>${esc2(c.name)}</td><td>${esc2(c.file)}</td></tr>`))],
+  ['imports','Imports',a=>(a.imports||{}).count,a=>{
+    const im=a.imports||{};
+    return `<p class="hint">${im.count} import statements across the codebase — top modules by usage:</p>`+
+      dtable(['Module','Uses'],(im.top_modules||[]).map(m=>`<tr><td>${esc2(m.module)}</td><td>${m.uses}</td></tr>`));
+  }],
+  ['integrations','Integrations',a=>(a.integrations||[]).length,a=>dtable(['Integration','Sample file'],
+    (a.integrations||[]).map(i=>`<tr><td class="plain">${esc2(i.name)}</td><td>${esc2(i.sample_file)}</td></tr>`))],
+  ['tests','Tests',a=>(a.tests||[]).length,a=>dtable(['Test file','Cases'],
+    (a.tests||[]).map(t=>`<tr><td>${esc2(t.file)}</td><td>${t.cases}</td></tr>`))],
+  ['dependencies','Dependencies',a=>((a.dependencies||{}).python||[]).length+((a.dependencies||{}).node||[]).length,a=>{
+    const d=a.dependencies||{};
+    return `<h2 style="font-size:13px">Python <span class="tg">${(d.python||[]).length}</span></h2>`+
+      dtable(['Package'],(d.python||[]).map(p=>`<tr><td>${esc2(p)}</td></tr>`))+
+      `<h2 style="font-size:13px;margin-top:14px">Node <span class="tg">${(d.node||[]).length}</span></h2>`+
+      dtable(['Package'],(d.node||[]).map(p=>`<tr><td>${esc2(p)}</td></tr>`));
+  }],
+  ['database','Database',a=>((a.database||{}).tables||[]).length,a=>{
+    const db=a.database||{};
+    return `<div class="kv"><div class="k">Engines</div><div class="taglist">${(db.engines||[]).map(e=>`<span class="tg">${esc2(e)}</span>`).join('')||'—'}</div>
+      <div class="k">Migration files</div><div>${db.migrations||0}</div>
+      <div class="k">Tables (from DDL)</div><div>${(db.tables||[]).length}</div></div>`+
+      (db.tables&&db.tables.length?`<div style="margin-top:12px">`+dtable(['Table'],db.tables.map(t=>`<tr><td>${esc2(t)}</td></tr>`))+`</div>`:'');
+  }],
+  ['config','Config',a=>((a.config||{}).compose_services||[]).length,a=>{
+    const c=a.config||{};
+    return `<div class="kv"><div class="k">Compose services</div><div class="taglist">${(c.compose_services||[]).map(s=>`<span class="tg">${esc2(s)}</span>`).join('')||'—'}</div>
+      <div class="k">Dockerfiles</div><div>${(c.dockerfiles||[]).map(esc2).join('<br>')||'—'}</div>
+      <div class="k">Env keys</div><div class="taglist">${(c.env_keys||[]).map(e=>`<span class="tg">${esc2(e)}</span>`).join('')||'—'}</div></div>`;
+  }],
+  ['catalog','Catalog',a=>(a.catalog||{}).files_with_artifacts||0,a=>renderCatalog(a.catalog||{})],
+  ['migration','Migration',a=>(a.migration||[]).length,a=>`<ul class="notelist">${(a.migration||[]).map(n=>`<li>${esc2(n)}</li>`).join('')}</ul>`],
+];
+const CAT_SECTIONS=[
+  ['forms','Forms'],['buttons','Buttons'],['api_calls','API calls'],['links','Links'],
+  ['request_params','Request params'],['sql','SQL'],['functions_defined','Functions defined'],
+  ['functions_called','Functions called'],['session_read','Session read'],['session_write','Session write'],
+  ['validation_messages','Validation messages'],['conditions','Conditions / rules'],['includes','Includes'],
+];
+function renderCatalog(cat){
+  if(!cat || !cat.pages || !Object.keys(cat.pages).length)
+    return '<div class="empty">Deep catalog not available (skill extractor found nothing to catalog for this codebase).</div>';
+  const t=cat.totals||{};
+  const totalsRow=CAT_SECTIONS.filter(s=>t[s[0]]).map(s=>`<span class="tg">${s[1]}: ${t[s[0]]}</span>`).join(' ');
+  const files=Object.entries(cat.pages);
+  const blocks=files.map(([fp,rec])=>{
+    const counts=CAT_SECTIONS.filter(s=>Array.isArray(rec[s[0]])&&rec[s[0]].length)
+      .map(s=>`<span class="cbadge">${s[1].split(' ')[0]} ${rec[s[0]].length}</span>`).join('');
+    const secs=CAT_SECTIONS.filter(s=>Array.isArray(rec[s[0]])&&rec[s[0]].length).map(s=>{
+      const items=rec[s[0]].map(v=>{
+        if(s[0]==='forms')return `${esc2(v.method||'').toUpperCase()} ${esc2(v.action||'(no action)')} — ${(v.fields||[]).length} fields`;
+        return esc2(typeof v==='string'?v:JSON.stringify(v));
+      }).join('<br>');
+      return `<div class="catsec"><div class="ct">${s[1]} · ${rec[s[0]].length}</div><div class="cl">${items}</div></div>`;
+    }).join('');
+    return `<details class="catfile"><summary>${esc2(fp)}<span class="cc">${counts}</span></summary><div class="body">${secs}</div></details>`;
+  }).join('');
+  return `<p class="hint">Per-file catalog from the <b>run-any-codebase</b> extractor — the inventory a rewrite must reproduce (forms, rules, params, SQL, session, call graph). ${cat.files_with_artifacts} files. <span class="taglist" style="margin-top:6px">${totalsRow}</span></p><div class="artscroll">${blocks}</div>`;
+}
+async function loadArtifacts(jid){
+  const job=await api('/api/jobs/'+jid);
+  const a=(job.metrics||{}).artifacts;
+  if(!a){$('art_empty').style.display='block';$('art_body').style.display='none';return;}
+  ARTJOB=jid; VIEWJOB=jid; JOBSCACHE[jid]=job; setActive(jid);
+  if(continuedJob && continuedJob!==jid) continuedJob=null;  // re-gate on a different job
+  if(job.continued)continuedJob=jid;
+  if(job.finalised)finalisedJob=jid;
+  updateNavLocks();
+  $('art_empty').style.display='none';$('art_body').style.display='block';
+  $('art_sub').textContent=job.source;
+  renderPlanCard(job.stack);
+  renderReviveCard(job);
+  $('arttabs').innerHTML=ART_TABS.map(t=>{
+    const c=t[2](a);
+    return `<div class="arttab ${t[0]===artTab?'active':''}" data-t="${t[0]}">${t[1]}${c!=null?`<span class="badge">${c}</span>`:''}</div>`;
+  }).join('');
+  document.querySelectorAll('.arttab').forEach(el=>el.onclick=()=>{artTab=el.dataset.t;drawArt(a);document.querySelectorAll('.arttab').forEach(x=>x.classList.toggle('active',x.dataset.t===artTab));});
+  drawArt(a);
+}
+function drawArt(a){
+  const t=ART_TABS.find(x=>x[0]===artTab)||ART_TABS[0];
+  $('artpanel').innerHTML=t[3](a);
+}
+let continuedJob=null;  // UCP is gated: only shown after Continue is pressed for a job
+function setActive(jid){ try{localStorage.setItem('active_job',jid);}catch(e){} }
+$('toUcpBtn').onclick=()=>{ if(ARTJOB){continuedJob=ARTJOB;setActive(ARTJOB);api('/api/jobs/'+ARTJOB+'/continue',{method:'POST'});updateNavLocks();loadResult(ARTJOB).then(()=>go('result'));} };
+function showUcpGate(){
+  $('result_body').style.display='none';
+  $('result_empty').style.display='block';
+  $('result_empty').innerHTML='<div class="empty">UCP points appear after you review a job\'s <a style="cursor:pointer" onclick="pickJob(loadArtifacts,\'artifacts\')">Artifacts</a> and press <b>Continue to UCP &amp; Pricing</b>.</div>';
+}
+
+function pipelineStage(j){
+  if(j.status==='failed')return {label:'Failed',cls:'s-fail'};
+  if(j.status!=='done')return {label:'Ingesting',cls:'s-run'};
+  const built=j.stage2&&Object.values(j.stage2).some(s=>s&&s.status==='done');
+  if(built)return {label:'Built',cls:'s-built'};
+  const rev=(j.revive_result||{}).status;
+  if(rev==='running')return {label:'Revived',cls:'s-revived'};
+  if(j.finalised)return {label:'Finalised',cls:'s-final'};
+  if(j.continued)return {label:'Continued',cls:'s-cont'};
+  if(j.result)return {label:'Sized',cls:'s-sized'};
+  return {label:'—',cls:'s-none'};
+}
+async function loadJobs(){
+  const d=await api('/api/jobs');const js=d.jobs||[];
+  $('jobs_empty').style.display=js.length?'none':'block';
+  $('jobs_tbody').innerHTML=js.map(j=>{const st=pipelineStage(j);return `<tr class="click" data-id="${j.id}"><td><b>${j.id}</b></td><td class="covers">${j.source}</td><td>${planChipsHtml(j.stack)}</td><td><span class="chip ${j.status}">${j.status}</span></td><td><span class="stagebadge ${st.cls}">${st.label}</span></td><td class="num">${j.result?fmt(j.result.ucp):'—'}</td><td class="num">${j.result?j.result.band:'—'}</td><td class="num">${j.started_h}</td></tr>`;}).join('');
+  document.querySelectorAll('#jobs_tbody tr').forEach(tr=>tr.onclick=()=>{
+    const j=js.find(x=>x.id===tr.dataset.id);
+    if(j.status==='done'){loadArtifacts(j.id).then(()=>go('artifacts'));}else openConsole(j.id);
+  });
+}
+function esc(s){return String(s).replace(/[\r\x00-\x08\x0b\x0c\x0e-\x1f]/g,'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+// ---- Settings ----
+const PROVIDERS=[
+  ['heuristic','Heuristic (no AI)','🧮','Deterministic rules — no key needed, fully explainable'],
+  ['openai','OpenAI','⚡','GPT models via API key'],
+  ['bedrock','AWS Bedrock','☁️','Claude / Titan via AWS credentials'],
+  ['anthropic','Anthropic','🧠','Claude via API key'],
+];
+function providerHasKey(prov){
+  const s=SETTINGS||{};
+  if(prov==='openai')return !!(s.openai&&s.openai.api_key_set);
+  if(prov==='bedrock')return !!(s.bedrock&&s.bedrock.access_key_id_set&&s.bedrock.secret_access_key_set);
+  if(prov==='anthropic')return !!(s.anthropic&&s.anthropic.api_key_set);
+  return true;
+}
+let SETTINGS={};
+let PRICING={currency:'₹',ucp:{},tb:{}};
+async function loadSettings(){
+  SETTINGS=await api('/api/settings');
+  const p=SETTINGS.provider||'heuristic';
+  $('provpick').innerHTML=PROVIDERS.map(x=>{
+    const set=providerHasKey(x[0]);
+    const badge=x[0]==='heuristic'?'':`<span class="astat ${set?'active':'planned'}" style="margin-top:8px;display:inline-block">${set?'✓ key set':'no key'}</span>`;
+    return `<div class="provcard ${x[0]===p?'sel':''}" data-p="${x[0]}"><div class="rad"></div><div style="font-size:19px">${x[2]}</div><b>${x[1]}</b><small>${x[3]}</small>${badge}</div>`;
+  }).join('');
+  document.querySelectorAll('#provpick .provcard').forEach(el=>el.onclick=()=>{SETTINGS.provider=el.dataset.p;document.querySelectorAll('#provpick .provcard').forEach(s=>s.classList.toggle('sel',s.dataset.p===el.dataset.p));updateProvWarn();});
+  updateProvWarn();
+  const g=(id,v)=>{$(id).value=v||'';};
+  g('oa_key',SETTINGS.openai.api_key); g('oa_model',SETTINGS.openai.model);
+  g('br_ak',SETTINGS.bedrock.access_key_id); g('br_sk',SETTINGS.bedrock.secret_access_key);
+  g('br_region',SETTINGS.bedrock.region); g('br_model',SETTINGS.bedrock.model);
+  g('an_key',SETTINGS.anthropic.api_key); g('an_model',SETTINGS.anthropic.model);
+  const pr=SETTINGS.pricing||{ucp:{},tb:{},currency:'₹'};
+  PRICING=pr;
+  ['Small','Medium','Large'].forEach(b=>{g('pr_ucp_'+b,(pr.ucp||{})[b]||0);g('pr_tb_'+b,(pr.tb||{})[b]||0);});
+  g('pr_currency',pr.currency||'₹');
+}
+function updateProvWarn(){
+  const el=$('prov_warn'); if(!el) return;
+  const p=(SETTINGS&&SETTINGS.provider)||'heuristic';
+  const label=(PROVIDERS.find(x=>x[0]===p)||[])[1]||p;
+  if(p!=='heuristic' && !providerHasKey(p)){
+    el.style.display='block';
+    el.textContent=`⚠ ${label} is selected but has no credentials saved. Add its key below and Save, or the app will fall back to Heuristic (no AI).`;
+  } else { el.style.display='none'; el.textContent=''; }
+}
+$('saveSettings').onclick=async()=>{
+  const num=id=>parseFloat($(id).value)||0;
+  const patch={provider:SETTINGS.provider,
+    openai:{api_key:$('oa_key').value,model:$('oa_model').value},
+    bedrock:{access_key_id:$('br_ak').value,secret_access_key:$('br_sk').value,region:$('br_region').value,model:$('br_model').value},
+    anthropic:{api_key:$('an_key').value,model:$('an_model').value},
+    pricing:{currency:$('pr_currency').value||'₹',
+      ucp:{Small:num('pr_ucp_Small'),Medium:num('pr_ucp_Medium'),Large:num('pr_ucp_Large')},
+      tb:{Small:num('pr_tb_Small'),Medium:num('pr_tb_Medium'),Large:num('pr_tb_Large')}}};
+  $('settings_status').textContent='Saving…';$('settings_status').style.color='var(--muted)';
+  SETTINGS=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
+  await loadSettings(); await refreshConfig();
+  $('settings_status').textContent='✓ Saved';$('settings_status').style.color='var(--emerald)';
+};
+$('testProvider').onclick=async()=>{
+  $('settings_status').textContent='Testing provider…';$('settings_status').style.color='var(--muted)';
+  const r=await api('/api/settings/test',{method:'POST'});
+  $('settings_status').textContent=(r.ok?'✓ ':'✗ ')+r.message;
+  $('settings_status').style.color=r.ok?'var(--emerald)':'var(--red)';
+};
+// ---- LLM Agents (fetched from backend registry) ----
+let AGENTS=[], AGENT_PROV='heuristic';
+function agentStatus(type){
+  if(type==='deterministic')return ['deterministic','Deterministic'];
+  if(type==='static')return ['deterministic','Static'];
+  if(type==='planned')return ['planned','Planned'];
+  return AGENT_PROV==='heuristic'?['fallback','Heuristic fallback']:['active','Active · '+AGENT_PROV];
+}
+async function loadAgents(){
+  const d=await api('/api/agents');
+  AGENTS=d.agents||[]; AGENT_PROV=d.provider||'heuristic';
+  $('agents_engine').textContent='engine: '+AGENT_PROV;
+  $('agentgrid').innerHTML=AGENTS.map(a=>{
+    const [cls,lbl]=agentStatus(a.type);
+    return `<div class="agentcard clk" data-id="${a.id}"><div class="ai">${a.icon}</div><div style="flex:1">
+      <div class="an">${esc2(a.name)} <span class="astat ${cls}">${lbl}</span></div>
+      <div class="ad">${esc2(a.description)}</div>
+      <div class="ameta"><span>${esc2(a.io||'')}</span></div></div><div class="chev">›</div></div>`;
+  }).join('');
+  document.querySelectorAll('#agentgrid .agentcard').forEach(el=>el.onclick=()=>openAgent(el.dataset.id));
+}
+let AM_ID=null;
+function openAgent(id){
+  const a=AGENTS.find(x=>x.id===id); if(!a)return;
+  AM_ID=id;
+  const [cls,lbl]=agentStatus(a.type);
+  $('am_title').innerHTML=`${a.icon} ${esc2(a.name)} <span class="astat ${cls}">${lbl}</span>`;
+  $('am_desc').textContent=a.description;
+  $('am_io').innerHTML=`<span>${esc2(a.io||'')}</span>`;
+  $('am_details').innerHTML=(a.details||[]).map(d=>`<li>${esc2(d)}</li>`).join('');
+  if(a.editable){
+    $('am_promptwrap').style.display='block';$('am_noprompt').style.display='none';
+    $('am_prompt').value=a.system_prompt||a.default_prompt||'';
+    $('am_promptnote').textContent=a.type==='planned'?'planned — saved for when wired':'live — drives the LLM call';
+    $('am_status').textContent='';
+  }else{
+    $('am_promptwrap').style.display='none';$('am_noprompt').style.display='block';
+  }
+  $('agentModal').style.display='grid';
+}
+function closeAgent(){$('agentModal').style.display='none';}
+$('am_close').onclick=closeAgent;
+$('agentModal').onclick=e=>{if(e.target.id==='agentModal')closeAgent();};
+$('am_save').onclick=async()=>{
+  $('am_status').textContent='Saving…';$('am_status').style.color='var(--muted)';
+  const r=await api('/api/agents/'+AM_ID,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system_prompt:$('am_prompt').value})});
+  if(r.error){$('am_status').textContent='✗ '+r.error;$('am_status').style.color='var(--red)';return;}
+  const a=AGENTS.find(x=>x.id===AM_ID);if(a)a.system_prompt=r.system_prompt;
+  $('am_status').textContent='✓ Saved';$('am_status').style.color='var(--emerald)';
+};
+$('am_reset').onclick=async()=>{
+  const r=await api('/api/agents/'+AM_ID,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reset:true})});
+  $('am_prompt').value=r.system_prompt||'';
+  const a=AGENTS.find(x=>x.id===AM_ID);if(a)a.system_prompt=r.system_prompt;
+  $('am_status').textContent='↺ Reset to default';$('am_status').style.color='var(--emerald)';
+};
+
+// ---- Stage 2 · build skill wizards ----
+let finalisedJob=null;
+const PIXEL_FORM=[
+  {k:'site_url',label:'Running site URL / port',type:'text',ph:'http://localhost:3000',hint:'The app must be RUNNING at this URL (localhost only). Tip: use ⚡ Revive first to boot the ingested app — its live URL then auto-fills here.'},
+  {k:'target_arch',label:'Target architecture',type:'chips',opts:['React + Tailwind','Match source framework','React + CSS Modules','Custom']},
+  {k:'routes',label:'Routes in scope',type:'chips',opts:['All routes (crawl)','Named list','Given pages only']},
+  {k:'routes_list',label:'Route list',type:'text',ph:'/, /login, /dashboard',showIf:['routes','Named list']},
+  {k:'viewports',label:'Viewports',type:'chips',opts:['Desktop only (1280×800)','Desktop + Mobile','Custom']},
+  {k:'threshold',label:'Pixel threshold (stop line)',type:'chips',opts:['Pixel-perfect (<0.5%)','Tight (≤1%)','Visual-approx (≤3%)']},
+  {k:'dynamic',label:'Dynamic content handling',type:'chips',opts:['Mask dynamic regions','Seed fixed dataset','Login required']},
+  {k:'visual_state',label:'Visual state to clone',type:'chips',opts:['Logged-out default','Logged-in','Specific theme / locale']},
+  {k:'assets',label:'Asset reuse',type:'chips',opts:['Reuse original assets','Placeholder (brand constraints)']},
+];
+const LEGACY_FORM=[
+  {k:'bundle',label:'Migration bundle source',type:'text',ph:'migration-bundle/ (from the ingested job)'},
+  {k:'target_stack',label:'Target stack',type:'chips',opts:['React + Django/DRF','React + FastAPI','Next.js + Django','Custom']},
+  {k:'ui_fidelity',label:'UI fidelity',type:'chips',opts:['Mirror legacy','Modern redesign']},
+  {k:'auth_db',label:'Auth database',type:'chips',opts:['Separate auth DB (two-DB router)','Reuse legacy']},
+  {k:'microservices',label:'Extract microservices',type:'chips',opts:['None','Extract heavy modules']},
+  {k:'parity_gate',label:'Data-parity gate',type:'chips',opts:['Enforce data parity (recommended)','Skip']},
+];
+const stage2Answers={pixel:{},legacy:{}};
+function renderForm(kind){
+  const cfg=kind==='pixel'?PIXEL_FORM:LEGACY_FORM, ans=stage2Answers[kind];
+  cfg.forEach(q=>{if(ans[q.k]===undefined&&q.type==='chips')ans[q.k]=q.opts[0];});
+  // prefill site_url from a revive URL / bundle from source
+  const job=JOBSCACHE[finalisedJob];
+  // Prefill the capture URL with a REAL value (never leave it empty → the run fails).
+  // Priority: the revived app's live URL → else this tool's own URL as a working demo.
+  if(kind==='pixel'&&!ans.site_url){
+    ans.site_url=(job&&job.revive_result&&job.revive_result.url)||location.origin;
+  }
+  if(kind==='legacy'&&!ans.bundle&&job)ans.bundle=(job.source||'')+' → migration-bundle/';
+  const html=cfg.map(q=>{
+    if(q.showIf){const [dk,dv]=q.showIf;if(ans[dk]!==dv)return '';}
+    if(q.type==='text')
+      return `<div class="q"><label class="fld">${q.label}</label><input type="text" data-k="${q.k}" value="${esc2(ans[q.k]||'')}" placeholder="${esc2(q.ph||'')}"/>${q.hint?`<p class="hint" style="margin-top:4px">${q.hint}</p>`:''}</div>`;
+    return `<div class="q"><label class="fld">${q.label}</label><div class="chiprow" data-q="${q.k}">${q.opts.map(o=>`<div class="chip2 ${ans[q.k]===o?'on':''}" data-v="${esc2(o)}">${esc2(o)}</div>`).join('')}</div></div>`;
+  }).join('');
+  const info=kind==='legacy'?`<p class="hint" style="margin-top:6px;color:var(--blue)">ℹ️ Transition DB: builds parallel on the SAME live legacy DB (managed=False). No data migration here — that's a separate downstream task.</p>`:'';
+  $(kind+'_form').innerHTML=html+info;
+  $(kind+'_form').querySelectorAll('input[data-k]').forEach(el=>el.oninput=()=>{ans[el.dataset.k]=el.value;});
+  $(kind+'_form').querySelectorAll('.chiprow').forEach(row=>row.querySelectorAll('.chip2').forEach(c=>c.onclick=()=>{ans[row.dataset.q]=c.dataset.v;renderForm(kind);}));
+}
+// ---- Revive stage (dedicated page) ----
+let REVIVEPOLL=null;
+function renderReviveStage(){
+  if(!finalisedJob){$('revive_lock').style.display='block';$('revive_body').style.display='none';return;}
+  $('revive_lock').style.display='none';$('revive_body').style.display='block';
+  // reflect current state
+  api('/api/jobs/'+finalisedJob+'/revive/status').then(s=>reviveRender(s)).catch(()=>{});
+}
+function _fmtElapsed(sec){
+  if(sec==null) return null;
+  if(sec<60) return `${sec.toFixed(0)}s`;
+  const m=Math.floor(sec/60), r=Math.round(sec%60);
+  return `${m}m ${r}s`;
+}
+function _reviveStatsRow(s){
+  const elapsed=_fmtElapsed(s.elapsed_seconds);
+  const chips=[];
+  if(elapsed!=null) chips.push(`⏱ ${elapsed}`);
+  if(s.attempts!=null) chips.push(`🔁 attempt ${s.attempts}${s.max_attempts?'/'+s.max_attempts:''}`);
+  const u=s.usage||{};
+  if(u.provider) chips.push(esc2(`${u.provider} ${u.model||''}`.trim()));
+  return chips.length ? chips.map(c=>`<span class="pill" style="font-family:var(--mono)">${c}</span>`).join(' ') : '';
+}
+function _reviveTokenSection(s){
+  const u=s.usage;
+  if(!u || (u.total_tokens==null && !u.calls)) return '';
+  const inTok=u.prompt_tokens, outTok=u.completion_tokens, total=u.total_tokens;
+  return `<div class="proofgrid">
+    <div class="proofcard"><div class="pl">Tokens In</div><div class="pv" style="color:var(--blue)">${inTok!=null?inTok.toLocaleString():'—'}</div><div class="ps">prompt</div></div>
+    <div class="proofcard"><div class="pl">Tokens Out</div><div class="pv" style="color:var(--teal)">${outTok!=null?outTok.toLocaleString():'—'}</div><div class="ps">completion</div></div>
+    <div class="proofcard"><div class="pl">Total</div><div class="pv">${total!=null?total.toLocaleString():'—'}</div><div class="ps">${u.calls||0} AI call(s)</div></div>
+    <div class="proofcard"><div class="pl">Model</div><div class="pv" style="font-size:15px">${esc2(u.model||'—')}</div><div class="ps">${esc2(u.provider||'')}</div></div>
+  </div>`;
+}
+const LANE_BADGE={
+  pending:   {color:'var(--dim)',    icon:'\u25cb', label:'Pending'},
+  starting:  {color:'var(--blue)',   icon:'\u25d0', label:'Starting'},
+  generating:{color:'var(--blue)',   icon:'\u25d0', label:'Generating'},
+  building:  {color:'var(--blue)',   icon:'\u25d0', label:'Building'},
+  built:     {color:'var(--teal)',   icon:'\u25d1', label:'Built'},
+  healthy:   {color:'var(--emerald)',icon:'\u25cf', label:'Healthy'},
+  failed:    {color:'var(--red)',    icon:'\u2715', label:'Failed'},
+  skipped:   {color:'var(--dim)',    icon:'\u2014', label:'Skipped'},
+};
+function _reviveLanesBoard(s){
+  const scope=s.scope, lanes=s.lanes;
+  if(!scope && !lanes) return '';
+  const items=[
+    {key:'database', title:'\ud83d\uddc4\ufe0f Database',
+      detail: scope && scope.database && scope.database.detected ? (scope.database.engines||[]).join(', ') : 'not detected'},
+    {key:'backend', title:'\u2699\ufe0f Backend',
+      detail: scope && scope.backend && scope.backend.detected ? esc2(scope.backend.label||'detected') : 'not detected'},
+    {key:'frontend', title:'\ud83c\udfa8 Frontend',
+      detail: scope && scope.frontend && scope.frontend.detected ? ('separate, in ' + esc2(scope.frontend.where||'')) : 'none \u2014 bundled or server-rendered'},
+  ];
+  let html='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">';
+  for(const item of items){
+    const st=(lanes && lanes[item.key]) || 'pending';
+    const b=LANE_BADGE[st] || {color:'var(--dim)', icon:'?', label:st};
+    html+=`<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px">
+      <div style="font-size:12.5px;font-weight:700;margin-bottom:3px">${item.title}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;min-height:14px">${item.detail}</div>
+      <div style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:${b.color}">
+        <span>${b.icon}</span><span>${b.label}</span>
+      </div>
+    </div>`;
+  }
+  html+='</div>';
+  return html;
+}
+function reviveRender(s){
+  const proof=$('revive_proof'), con=$('revive_console'), btn=$('reviveBootBtn'), stop=$('reviveStopBtn2'), stats=$('revive_stats');
+  const lanesWrap=$('revive_lanes_wrap'), lanesEl=$('revive_lanes');
+  const tokensWrap=$('revive_tokens_wrap'), tokensEl=$('revive_tokens');
+  const proofWrap=$('revive_proof_wrap'), logsWrap=$('revive_logs_wrap');
+  const statsHtml=_reviveStatsRow(s);
+  if(statsHtml){stats.style.display='flex';stats.style.gap='6px';stats.style.flexWrap='wrap';stats.innerHTML=statsHtml;}
+  else stats.style.display='none';
+  const lanesHtml=_reviveLanesBoard(s);
+  if(lanesHtml){lanesWrap.style.display='block';lanesEl.innerHTML=lanesHtml;}
+  else lanesWrap.style.display='none';
+  const tokenHtml=_reviveTokenSection(s);
+  if(tokenHtml){tokensWrap.style.display='block';tokensEl.innerHTML=tokenHtml;}
+  else tokensWrap.style.display='none';
+  if(s.logs&&s.logs.length){logsWrap.style.display='block';con.innerHTML=s.logs.map(l=>`<span class="t">[${l.t}]</span> <span class="${lvClass(l.level)}">${esc2(l.msg)}</span>`).join('\n');con.scrollTop=con.scrollHeight;}
+  else logsWrap.style.display='none';
+  const r=s.result||s; // status endpoint returns flat; job.revive_result is nested — normalise
+  const st=s.status;
+  proofWrap.style.display = (st==='idle'||!st) ? 'none' : 'block';
+  if(st==='running'){
+    btn.textContent='✓ Live';btn.disabled=true;stop.style.display='inline-flex';
+    const fixes=(s.fixes||r.fixes||[]);
+    proof.innerHTML=`<div class="proofgrid">
+      <div class="proofcard"><div class="pl">Status</div><div class="pv">Running</div><div class="ps">agentic boot</div></div>
+      <div class="proofcard"><div class="pl">Live URL</div><div class="pv" style="font-size:15px"><a class="liveurl" href="${esc2(s.url)}" target="_blank">${esc2(s.url)}</a></div><div class="ps">handed to UI-clone</div></div>
+      <div class="proofcard"><div class="pl">Containers</div><div class="pv">${s.containers||r.containers||'—'}</div><div class="ps">docker</div></div>
+      <div class="proofcard"><div class="pl">Self-heal fixes</div><div class="pv">${fixes.length}</div><div class="ps">LLM build repairs</div></div>
+    </div>
+    ${s.containerized?`<p class="hint" style="margin-top:8px;color:var(--teal)">🐳 No compose existed — the agent <b>generated a Dockerfile + docker-compose</b> (run-any-codebase containerization) on a sandboxed copy.</p>`:''}
+    ${fixes.length?`<p class="hint" style="margin-top:6px">Self-heal fixed on the sandbox copy: ${fixes.map(f=>'<code>'+esc2(f.file)+'</code>').join(', ')} (original untouched).</p>`:''}
+    <div class="ucpbar" style="margin-top:14px"><div class="ucpbar-txt">App is live — clone its UI next.</div><button class="btn" onclick="openView('pixel')">Continue to UI Pixel-Clone →</button></div>`;
+  } else if(st==='booting'){
+    btn.textContent='Booting…';btn.disabled=true;stop.style.display='none';
+    proof.innerHTML='<p class="hint">Booting… the agent will ask here if it needs a decision (watch the 💬 assistant).</p>';
+  } else if(st==='running_no_http'){
+    btn.textContent='⚡ Retry boot';btn.disabled=false;stop.style.display='inline-flex';
+    proof.innerHTML=`<p class="hint" style="color:var(--amber)">${esc2(s.reason||'Booted, but no web endpoint. Backend/DB-only stacks have nothing to clone — try Legacy Transform.')}</p>`;
+  } else if(st==='failed'){
+    btn.textContent='⚡ Retry boot';btn.disabled=false;stop.style.display='none';
+    proof.innerHTML=`<p class="hint" style="color:var(--red)">${esc2(s.reason||'Boot failed.')}</p>`;
+  } else {
+    btn.textContent='⚡ Boot app';btn.disabled=false;stop.style.display='none';proof.innerHTML='';
+  }
+}
+$('reviveBootBtn').onclick=async()=>{
+  if(!finalisedJob)return;
+  $('reviveBootBtn').disabled=true;$('reviveBootBtn').textContent='Booting…';$('revive_console').style.display='block';
+  const r=await api('/api/jobs/'+finalisedJob+'/revive/start',{method:'POST'});
+  if(r.error){$('revive_proof').innerHTML='<p class="hint" style="color:var(--red)">✗ '+esc2(r.error)+'</p>';$('reviveBootBtn').disabled=false;$('reviveBootBtn').textContent='⚡ Boot app';return;}
+  clearInterval(REVIVEPOLL);
+  REVIVEPOLL=setInterval(async()=>{
+    const s=await api('/api/jobs/'+finalisedJob+'/revive/status');reviveRender(s);
+    if(['running','failed','running_no_http'].includes(s.status))clearInterval(REVIVEPOLL);
+  },1500);
+};
+$('reviveStopBtn2').onclick=async()=>{
+  $('reviveStopBtn2').textContent='Stopping…';
+  await api('/api/jobs/'+finalisedJob+'/revive/stop',{method:'POST'});
+  $('reviveBootBtn').disabled=false;$('reviveBootBtn').textContent='⚡ Boot app';$('reviveStopBtn2').style.display='none';$('reviveStopBtn2').textContent='Stop';$('revive_proof').innerHTML='';
+};
+
+function renderStage2View(kind){
+  if(!finalisedJob){$(kind+'_lock').style.display='block';$(kind+'_body').style.display='none';return;}
+  $(kind+'_lock').style.display='none';$(kind+'_body').style.display='block';
+  renderForm(kind);
+  if(kind==='pixel'&&finalisedJob){
+    // reflect any already-running app so the URL is pre-filled
+    api('/api/jobs/'+finalisedJob+'/revive/status').then(s=>{
+      if(s&&s.status==='running'&&s.url)bootSetLive(s.url);
+    }).catch(()=>{});
+  }
+  // show a PRIOR completed run's results (gallery included) on page load —
+  // without this, revisiting the page after a run shows an empty form again.
+  if(finalisedJob){
+    api('/api/jobs/'+finalisedJob+'/build/'+kind+'/status').then(s=>{
+      if(s&&(s.status==='done'||s.status==='failed')&&s.result){
+        $(kind+'_run_panel').style.display='block';
+        renderRunResult(kind,s);
+      }
+    }).catch(()=>{});
+  }
+}
+async function genStage2(kind){
+  if(!finalisedJob)return;
+  const r=await api('/api/jobs/'+finalisedJob+'/build/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answers:stage2Answers[kind]})});
+  if(r.error){alert(r.error);return;}
+  const out=$(kind+'_out');out.style.display='block';
+  out.innerHTML=`<h2>Launch plan <span class="pill">${esc2(r.summary)}</span></h2>
+    <div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin:10px 0 4px">Commands</div>
+    <div class="console" style="height:auto;max-height:280px">${r.commands.map(c=>esc2(c)).join('\n')}</div>
+    <div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin:12px 0 4px">Notes</div>
+    <ul class="notelist">${r.notes.map(n=>`<li>${esc2(n)}</li>`).join('')}</ul>`;
+  out.scrollIntoView({behavior:'smooth'});
+}
+$('pixel_gen').onclick=()=>genStage2('pixel');
+$('legacy_gen').onclick=()=>genStage2('legacy');
+
+let RUNPOLL={};
+async function runStage2(kind){
+  if(!finalisedJob)return;
+  // Always take the live field value (guards against an empty answers.site_url).
+  if(kind==='pixel'){
+    const inp=document.querySelector('#pixel_form input[data-k="site_url"]');
+    const v=inp&&inp.value.trim();
+    if(!v){alert('Enter the running site URL (e.g. http://localhost:3000). Tip: use ⚡ Revive first and its URL auto-fills here.');return;}
+    stage2Answers.pixel.site_url=v;
+  }
+  const btn=$(kind+'_run'), panel=$(kind+'_run_panel');
+  btn.disabled=true;btn.textContent='Running…';
+  panel.style.display='block';
+  panel.innerHTML=`<h2 style="margin:0 0 8px">▶ Live run <span class="chip running">running</span></h2><div class="console" id="${kind}_console" style="height:240px"></div>`;
+  const r=await api('/api/jobs/'+finalisedJob+'/build/'+kind+'/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answers:stage2Answers[kind]})});
+  if(r.error){panel.innerHTML='<div class="empty" style="color:var(--red)">✗ '+esc2(r.error)+'</div>';btn.disabled=false;btn.textContent=kind==='pixel'?'▶ Run Pixel-Clone agent':'▶ Run schema analysis (live)';return;}
+  clearInterval(RUNPOLL[kind]);
+  RUNPOLL[kind]=setInterval(async()=>{
+    const s=await api('/api/jobs/'+finalisedJob+'/build/'+kind+'/status');
+    const con=$(kind+'_console');
+    if(con)con.innerHTML=(s.logs||[]).map(l=>`<span class="t">[${l.t}]</span> <span class="${lvClass(l.level)}">${esc2(l.msg)}</span>`).join('\n');
+    if(con)con.scrollTop=con.scrollHeight;
+    if(s.status==='done'||s.status==='failed'){
+      clearInterval(RUNPOLL[kind]);
+      btn.disabled=false;btn.textContent=kind==='pixel'?'▶ Run Pixel-Clone agent':'▶ Run schema analysis (live)';
+      renderRunResult(kind,s);
+    }
+  },700);
+}
+const PIXEL_GALLERY={};
+function _countsLine(c){
+  if(!c||!Object.keys(c).length) return '<span class="hint">—</span>';
+  const order=[['buttons','Buttons'],['links','Links'],['inputs','Inputs'],['images','Images'],['forms','Forms'],['headings','Headings']];
+  return order.map(([k,label])=>`<span class="pill" style="font-family:var(--mono)">${label} ${c[k]!=null?c[k]:'—'}</span>`).join(' ');
+}
+function renderGalleryPage(kind,idx){
+  const pages=PIXEL_GALLERY[kind]||[];
+  const p=pages[idx]; if(!p) return;
+  const view=$(kind+'_gallery_view'); if(!view) return;
+  view.innerHTML=`<div class="grid2">
+    <div>
+      <div class="hint" style="margin-bottom:4px">Original (captured)</div>
+      <div style="height:440px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--bg2)">
+        ${p.original_sample?`<img src="${p.original_sample}" style="width:100%;display:block"/>`:'<div class="empty">—</div>'}
+      </div>
+      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${_countsLine(p.original_counts)}</div>
+    </div>
+    <div>
+      <div class="hint" style="margin-bottom:4px">Clone${p.clone_page_url?` (running · <a href="${esc2(p.clone_page_url)}" target="_blank">${esc2(p.clone_page_url)}</a>)`:''}</div>
+      <div style="height:440px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--bg2)">
+        ${p.clone_sample?`<img src="${p.clone_sample}" style="width:100%;display:block"/>`:'<div class="empty">clone not rendered</div>'}
+      </div>
+      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${_countsLine(p.clone_counts)}</div>
+    </div>
+  </div>`;
+}
+function renderRunResult(kind,s){
+  const panel=$(kind+'_run_panel'), r=s.result||{};
+  const chip=s.status==='done'?'<span class="chip done">done</span>':'<span class="chip failed">failed</span>';
+  let body=`<h2 style="margin:0 0 8px">▶ Live run ${chip}</h2>`;
+  body+=`<div class="console" style="height:180px">${(s.logs||[]).map(l=>`<span class="t">[${l.t}]</span> <span class="${lvClass(l.level)}">${esc2(l.msg)}</span>`).join('\n')}</div>`;
+  if(s.status==='failed'){body+=`<p class="hint" style="color:var(--red);margin-top:10px">${esc2(r.reason||'run failed')}</p>`;}
+  else if(kind==='pixel'&&r.ok){
+    body+=`<p class="hint" style="margin:2px 0 10px">Pixel-Clone agent · mode <span class="pill">${esc2(r.mode||'—')}</span></p>`;
+    body+=`<div class="proofgrid" style="margin-top:4px">
+      <div class="proofcard"><div class="pl">Screenshots</div><div class="pv">${r.screenshots}</div><div class="ps">captured PNGs</div></div>
+      <div class="proofcard"><div class="pl">DOM snapshots</div><div class="pv">${r.dom_snapshots||0}</div><div class="ps">per page</div></div>
+      <div class="proofcard"><div class="pl">Routes</div><div class="pv">${(r.routes||[]).length||'—'}</div><div class="ps">from source</div></div>
+      <div class="proofcard"><div class="pl">Components</div><div class="pv">${(r.components||[]).length}</div><div class="ps">React+Tailwind generated</div></div>
+    </div>`;
+    if((r.components||[]).length){
+      body+=`<div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin:14px 0 4px">Generated components</div>`+
+        dtable(['Component','File','Bytes'],r.components.map(c=>`<tr><td>${esc2(c.name)}.jsx</td><td>${esc2(c.file)}</td><td>${c.bytes}</td></tr>`));
+      body+=`<p class="hint" style="margin-top:6px">Written to <code>${esc2(r.output_dir||'')}</code> (sandboxed).</p>`;
+    }
+    if(r.clone_url){
+      body+=`<div class="ucpbar" style="margin-top:14px"><div class="ucpbar-txt">✓ The generated clone is <b style="color:var(--emerald)">running</b> — this is the NEW code, actually served.</div><a class="btn" href="${esc2(r.clone_url)}" target="_blank">Open running clone ↗</a></div>`;
+      body+=`<div class="ucpbar" style="margin-top:10px"><div class="ucpbar-txt">UI cloned — rewrite the backend on the live DB next.</div><button class="btn" onclick="openView('legacy')">Continue to Legacy Transform →</button></div>`;
+    }
+    if((r.pages||[]).length){
+      const pages=r.pages; PIXEL_GALLERY[kind]=pages;
+      body+=`<div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin:14px 0 6px">
+        Screen gallery — ${pages.length} screen${pages.length!==1?'s':''} captured
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <label class="hint" for="${kind}_page_select" style="margin:0">Screen</label>
+        <select id="${kind}_page_select" class="input" style="width:auto;min-width:220px"
+          onchange="renderGalleryPage('${kind}', this.value)">
+          ${pages.map((p,i)=>`<option value="${i}">${i+1}. ${esc2(p.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div id="${kind}_gallery_view"></div>`;
+    } else if(r.sample||r.clone_sample){
+      // older result shape (single sample pair) — kept so past runs still render
+      body+=`<div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin:14px 0 6px">Original vs generated clone</div>
+        <div class="grid2">
+          <div><div class="hint" style="margin-bottom:4px">Original (captured)</div>${r.sample?`<img src="${r.sample}" style="max-width:100%;border:1px solid var(--line);border-radius:8px"/>`:'<div class="empty">—</div>'}</div>
+          <div><div class="hint" style="margin-bottom:4px">Clone (running ${r.clone_url?'· '+esc2(r.clone_url):''})</div>${r.clone_sample?`<img src="${r.clone_sample}" style="max-width:100%;border:1px solid var(--line);border-radius:8px"/>`:'<div class="empty">clone not rendered</div>'}</div>
+        </div>`;
+    }
+  } else if(kind==='legacy'&&r.ok){
+    body+=`<div class="proofgrid" style="margin-top:12px">
+      <div class="proofcard"><div class="pl">Confident missing tables</div><div class="pv">${r.confident_missing||0}</div><div class="ps">referenced, not in schema</div></div></div>`;
+    if((r.stdout_tail||[]).length)body+=`<div class="ct" style="font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin:12px 0 4px">schema_diff output</div><div class="console" style="height:auto;max-height:200px">${r.stdout_tail.map(esc2).join('\n')}</div>`;
+  }
+  panel.innerHTML=body;
+  if((r.pages||[]).length) renderGalleryPage(kind, 0);
+}
+$('pixel_run').onclick=()=>runStage2('pixel');
+$('legacy_run').onclick=()=>runStage2('legacy');
+
+// ---- Boot app (on-demand revive) from the Pixel-Clone page ----
+let BOOTPOLL=null;
+function bootSetLive(url){
+  $('bootbar').classList.add('live');
+  $('boot_status').innerHTML=`✓ Running at <a class="liveurl" href="${esc2(url)}" target="_blank">${esc2(url)}</a> — URL filled below.`;
+  $('bootBtn').textContent='✓ Live';$('bootBtn').disabled=true;
+  $('bootStopBtn').style.display='inline-flex';
+  const inp=document.querySelector('#pixel_form input[data-k="site_url"]');
+  if(inp){inp.value=url;stage2Answers.pixel.site_url=url;}
+}
+$('bootBtn').onclick=async()=>{
+  if(!finalisedJob)return;
+  $('bootBtn').disabled=true;$('bootBtn').textContent='Booting…';
+  $('boot_console').style.display='block';
+  const r=await api('/api/jobs/'+finalisedJob+'/revive/start',{method:'POST'});
+  if(r.error){$('boot_status').innerHTML='<span style="color:var(--red)">✗ '+esc2(r.error)+'</span>';$('bootBtn').disabled=false;$('bootBtn').textContent='⚡ Boot app (Revive)';return;}
+  if(r.status==='running'&&r.url){bootSetLive(r.url);return;}
+  clearInterval(BOOTPOLL);
+  BOOTPOLL=setInterval(async()=>{
+    const s=await api('/api/jobs/'+finalisedJob+'/revive/status');
+    const c=$('boot_console');
+    if(c)c.innerHTML=(s.logs||[]).map(l=>`<span class="t">[${l.t}]</span> <span class="${lvClass(l.level)}">${esc2(l.msg)}</span>`).join('\n');
+    if(c)c.scrollTop=c.scrollHeight;
+    if(s.status==='running'&&s.url){clearInterval(BOOTPOLL);bootSetLive(s.url);}
+    else if(s.status==='failed'||s.status==='running_no_http'||s.status==='skipped'){
+      clearInterval(BOOTPOLL);
+      $('boot_status').innerHTML='<span style="color:var(--red)">✗ '+esc2(s.reason||s.status)+'</span>';
+      $('bootBtn').disabled=false;$('bootBtn').textContent='⚡ Retry boot';
+    }
+  },1500);
+};
+$('bootStopBtn').onclick=async()=>{
+  $('bootStopBtn').textContent='Stopping…';
+  await api('/api/jobs/'+finalisedJob+'/revive/stop',{method:'POST'});
+  $('bootbar').classList.remove('live');$('boot_status').textContent='App stopped. Boot again to capture.';
+  $('bootBtn').disabled=false;$('bootBtn').textContent='⚡ Boot app (Revive)';$('bootStopBtn').style.display='none';$('bootStopBtn').textContent='Stop';
+};
+let JOBSCACHE={};
+function updateNavLocks(){
+  const nav=v=>[...document.querySelectorAll('.nav[data-view]')].find(n=>n.dataset.view===v);
+  const u=nav('result');if(u)u.classList.toggle('locked',!continuedJob);
+  ['revive','pixel','legacy'].forEach(v=>{const n=nav(v);if(n)n.classList.toggle('locked',!finalisedJob);});
+}
+$('finaliseBtn').onclick=async()=>{
+  if(!continuedJob)return;
+  const r=await api('/api/jobs/'+continuedJob+'/finalise',{method:'POST'});
+  if(r.error){alert(r.error);return;}
+  finalisedJob=continuedJob;setActive(continuedJob);$('finalise_txt').innerHTML='✓ Finalised — Stage 2 unlocked. First step: Revive (boot the app).';
+  updateNavLocks();go('revive');
+};
+
+async function refreshConfig(){
+  CFG=await api('/api/config');
+  const b=$('ai_banner');
+  if(CFG.provider==='heuristic'){b.style.display='block';
+    b.textContent=CFG.demo_mode
+      ?'⚠ This Demo version runs without a live AI provider — the mapping / gap-filler agents use a guardrailed heuristic fallback (deterministic, explainable).'
+      :'⚠ No AI provider configured — the mapping / gap-filler agents run a guardrailed heuristic fallback (deterministic, explainable). Add a key under Settings to enable an LLM provider.';}
+  else{b.style.display='none';}
+}
+
+const TITLES={ingest:['📥','Ingest','Connect a repository, run it, and size it in UCP'],jobs:['⚙️','Jobs','Long-running ingest & analysis jobs'],console:['⚡','Job Console','Live process log'],artifacts:['📦','Artifacts','Detailed outputs from run-any-codebase'],result:['📐','UCP & Pricing','Points of work and estimated value'],revive:['♻️','Revive','Stage 2 · boot the app (agentic, self-healing)'],pixel:['🎨','UI Pixel-Clone','Stage 2 · pixel-perfect UI rebuild'],legacy:['🏗️','Legacy Transform','Stage 2 · modern rewrite on the live DB'],agents:['🤖','LLM Agents','The agents that run across an ingest job'],settings:['🔑','Settings','Provider API keys & pricing']};
+// ---- Client-side routing: every view has its own URL ----
+const VIEW_PATH={ingest:'/',jobs:'/jobs',artifacts:'/artifacts',console:'/console',result:'/ucp-pricing',revive:'/build/revive',pixel:'/build/pixel-clone',legacy:'/build/legacy-transform',agents:'/agents',settings:'/settings'};
+const PATH_VIEW=Object.fromEntries(Object.entries(VIEW_PATH).map(([v,p])=>[p,v]));
+function pathToView(p){ if(PATH_VIEW[p])return PATH_VIEW[p]; return PATH_VIEW[p.replace(/\/$/,'')]||'ingest'; }
+function go(view){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  $('v-'+view).classList.add('active');
+  document.querySelectorAll('.nav[data-view]').forEach(n=>n.classList.toggle('active',n.dataset.view===view));
+  const t=TITLES[view]||TITLES.ingest;$('topicn').textContent=t[0];$('toptitle').textContent=t[1];$('topsub').textContent=t[2];
+  if(view==='ingest')showStep(0);
+  if(view==='jobs')loadJobs();
+  if(view==='settings')loadSettings();
+  if(view==='agents')loadAgents();
+  if(view==='pixel'||view==='legacy')renderStage2View(view);
+  if(view==='revive')renderReviveStage();
+  updateNavLocks();
+  // update the address bar (guarded so back/forward don't create dup entries)
+  const path=VIEW_PATH[view]||'/';
+  if(location.pathname!==path) history.pushState({view},'',path);
+}
+// Dispatcher shared by nav clicks, deep-links and back/forward
+function openView(v){
+  if(v==='artifacts'){pickJob(loadArtifacts,'artifacts');return;}
+  if(v==='result'){
+    if(continuedJob){loadResult(continuedJob).then(()=>go('result'));}
+    else {showUcpGate();go('result');}
+    return;
+  }
+  go(v);
+}
+window.addEventListener('popstate',()=>openView(pathToView(location.pathname)));
+async function pickJob(loader,view){
+  // Prefer the job the user is currently working with; else the latest completed one.
+  let jid=VIEWJOB;
+  if(!jid){const d=await api('/api/jobs');const j=(d.jobs||[]).find(x=>x.result);jid=j&&j.id;}
+  if(jid)await loader(jid);
+  else { // no completed job at all — show the empty state
+    if(view==='artifacts'){$('art_empty').style.display='block';$('art_body').style.display='none';}
+    else {$('result_empty').style.display='block';$('result_body').style.display='none';}
+  }
+  go(view);
+}
+document.querySelectorAll('.nav[data-view]').forEach(n=>n.onclick=()=>{
+  if(n.classList.contains('locked'))return;   // greyed-out nav is not clickable
+  openView(n.dataset.view);
+});
+updateNavLocks();
+
+// ---- Agent Chatbot ----
+let CHAT_ACTIONS={}, CHAT_OPEN=false, CHAT_SEEN=0, CHATPOLL=null, CHAT_JOB_SEL=null;
+function chatJob(){ return CHAT_JOB_SEL || VIEWJOB || (function(){try{return localStorage.getItem('active_job');}catch(e){return null;}})(); }
+async function fillChatJobs(){
+  const sel=$('chatJobSel'); const cur=chatJob();
+  try{
+    const d=await api('/api/jobs'); const js=d.jobs||[];
+    sel.innerHTML=js.map(j=>`<option value="${j.id}">${j.id} · ${j.status==='done'?(j.result?fmt(j.result.ucp)+' UCP':'done'):j.status}</option>`).join('')||'<option value="">no jobs</option>';
+    if(cur && js.some(j=>j.id===cur)) sel.value=cur;
+    sel.onchange=()=>{CHAT_JOB_SEL=sel.value;loadChat();};
+  }catch(e){}
+}
+function renderChat(list){
+  const el=$('chatBody');
+  el.innerHTML=(list||[]).map(m=>{
+    const who=m.role==='user'?'You':(m.role==='assistant'?'Assistant':'Agent');
+    const acts=(m.actions||[]).map(a=>`<button class="cact" data-a="${a}">${esc2((CHAT_ACTIONS[a]||{}).label||a)}</button>`).join('');
+    const chs=(m.choices||[]).map(c=>`<button class="cact answer" data-c="${esc2(c)}">${esc2(c)}</button>`).join('');
+    const text=esc2(m.text).replace(/\n/g,'<br>').replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+    return `<div class="cmsg ${m.role} ${m.level||''} ${m.awaiting?'awaiting':''}"><div class="who">${who}${m.t?' · '+m.t:''}</div>${text}${acts?`<div class="cactions">${acts}</div>`:''}${chs?`<div class="cactions">${chs}</div>`:''}</div>`;
+  }).join('')||'<div class="hint" style="text-align:center;margin-top:20px">Ask about the current job — sizing, boot, the clone — or say “retry boot”.</div>';
+  el.scrollTop=el.scrollHeight;
+  el.querySelectorAll('.cact:not(.answer)').forEach(b=>b.onclick=()=>chatAction(b.dataset.a));
+  el.querySelectorAll('.cact.answer').forEach(b=>b.onclick=()=>chatAnswer(b.dataset.c));
+}
+async function loadChat(){
+  await fillChatJobs();
+  const jid=chatJob();
+  if(!jid){renderChat([]);return;}
+  const d=await api('/api/jobs/'+jid+'/messages');
+  CHAT_ACTIONS=d.actions||{};
+  renderChat(d.messages||[]);
+  CHAT_SEEN=(d.messages||[]).length;
+  $('chatBadge').style.display='none';
+}
+async function sendChat(){
+  const jid=chatJob(), t=$('chatText').value.trim();
+  if(!jid){renderChat([{role:'agent',level:'warn',text:'Run a job first — then I can help with it.'}]);return;}
+  if(!t)return;
+  $('chatText').value='';
+  const cur=$('chatBody');cur.innerHTML+=`<div class="cmsg user"><div class="who">You</div>${esc2(t)}</div>`;cur.scrollTop=cur.scrollHeight;
+  cur.innerHTML+=`<div class="cmsg assistant" id="cthinking"><div class="who">Assistant</div>…</div>`;
+  const r=await api('/api/jobs/'+jid+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
+  await loadChat();
+  if(r&&r.goto){openView(r.goto);}   // slash-command navigation
+}
+async function chatAction(a){
+  const jid=chatJob(); if(!jid)return;
+  const r=await api('/api/jobs/'+jid+'/chat/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})});
+  if(r.goto){closeChat();openView(r.goto);return;}
+  await loadChat();
+}
+async function chatAnswer(choice){
+  const jid=chatJob(); if(!jid)return;
+  await api('/api/jobs/'+jid+'/chat/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer:choice})});
+  await loadChat();
+}
+function openChat(){CHAT_OPEN=true;const p=$('chatPanel');p.style.display='flex';setTimeout(()=>p.classList.add('open'),10);$('chatFab').style.display='none';loadChat();}
+function closeChat(){CHAT_OPEN=false;const p=$('chatPanel');p.classList.remove('open');setTimeout(()=>{p.style.display='none';},220);$('chatFab').style.display='grid';}
+$('chatFab').onclick=()=>CHAT_OPEN?closeChat():openChat();
+$('chatClose').onclick=closeChat;
+$('chatSend').onclick=sendChat;
+$('chatText').addEventListener('keydown',e=>{if(e.key==='Enter')sendChat();});
+// poll for new agent messages → badge when closed
+setInterval(async()=>{
+  const jid=chatJob(); if(!jid)return;
+  try{const d=await api('/api/jobs/'+jid+'/messages');const n=(d.messages||[]).length;
+    if(CHAT_OPEN){renderChat(d.messages||[]);CHAT_SEEN=n;}
+    else if(n>CHAT_SEEN){const b=$('chatBadge');b.textContent=n-CHAT_SEEN;b.style.display='grid';}
+  }catch(e){}
+},5000);
+
+// init: load config, prefill path
+(async()=>{
+  try{
+    await refreshConfig();
+    applyDemoMode();
+    $('roots').textContent='Allowed roots: '+CFG.allowed_roots.join('  ·  ');
+    if(!DEMO_MODE)$('src_path').placeholder='/path/to/your/project';
+  }catch(e){}
+  renderIngest();
+  loadJobs();
+  await restoreState();
+  // Deep-link: render whatever view the URL points at (defaults to Ingest at "/")
+  const view=pathToView(location.pathname);
+  history.replaceState({view},'',VIEW_PATH[view]||'/');
+  if(view!=='ingest')openView(view);
+})();
+// Restore pipeline progress across refreshes: the JOB carries the stage flags.
+async function restoreState(){
+  let jid; try{jid=localStorage.getItem('active_job');}catch(e){}
+  if(!jid)return;
+  try{
+    const job=await api('/api/jobs/'+jid);
+    if(job.error||!job.result)return;
+    JOBSCACHE[jid]=job; VIEWJOB=jid;
+    if(job.continued)continuedJob=jid;
+    if(job.finalised)finalisedJob=jid;
+    updateNavLocks();
+  }catch(e){}
+}
+</script>
+</body>
+</html>
