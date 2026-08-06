@@ -302,11 +302,40 @@ def stage2_status(request, jid, kind):
     if not job:
         return JsonResponse({"error": "not found"}, status=404)
     slot = (job.get("stage2") or {}).get(kind) or {}
+    result = slot.get("result")
+    if kind == "pixel" and slot.get("status") == "done":
+        # Revive the preview server if a restart killed it, so a finished
+        # clone's link keeps working instead of 404ing at the browser.
+        from . import pixel_agent
+        result = pixel_agent.ensure_clone_serving(jid, result)
+        if result is not slot.get("result"):
+            slot["result"] = result
     return JsonResponse({
         "status": slot.get("status", "idle"),
         "logs": slot.get("logs", []),
-        "result": slot.get("result"),
+        "result": result,
     })
+
+
+def _revive_result(j):
+    """Revive's result, with the DB connection derived on read if it predates
+    that field. Jobs revived before db_url existed still have their compose on
+    disk, and re-running a multi-minute boot just to populate one prefill would
+    be a poor trade -- read it back out of the compose instead."""
+    rr = j.get("revive_result")
+    if not isinstance(rr, dict) or rr.get("db_url") or settings.CODEINTEL_DEMO_MODE:
+        return rr
+    compose = rr.get("compose")
+    if not compose or not Path(compose).exists():
+        return rr
+    try:
+        from .revive_agent import _db_urls_from_compose
+        dbs = _db_urls_from_compose(compose)
+    except Exception:
+        return rr
+    if not dbs:
+        return rr
+    return {**rr, "databases": dbs, "db_url": dbs[0]["url"]}
 
 
 def _public(j, full=False):
@@ -315,7 +344,7 @@ def _public(j, full=False):
         "use_llm": j["use_llm"], "status": j["status"], "progress": j["progress"],
         "stage": j["stage"], "started_h": j["started_h"], "error": j.get("error"),
         "result": j.get("result"), "revive": j.get("revive", False),
-        "revive_result": j.get("revive_result"),
+        "revive_result": _revive_result(j),
         "continued": j.get("continued", False),
         "finalised": j.get("finalised", False), "stage2": j.get("stage2"),
     }

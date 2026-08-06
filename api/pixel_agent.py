@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import urllib.request
@@ -482,6 +483,53 @@ _CLONE_SERVERS = {}
 # with the pixel-clone skill). Imported at the top as `_count_elements`. The old
 # regex version counted tags inside <script type="text/babel"> JSX source, which
 # double-counted every element in clone preview pages (~2x the original).
+
+
+def _port_alive(port) -> bool:
+    if not port:
+        return False
+    s = socket.socket()
+    s.settimeout(0.4)
+    try:
+        return s.connect_ex(("127.0.0.1", int(port))) == 0
+    except (ValueError, OSError):
+        return False
+    finally:
+        s.close()
+
+
+def ensure_clone_serving(jid: str, result: dict) -> dict:
+    """Re-serve a finished clone whose preview server died.
+
+    The preview server is a thread inside THIS process, so every restart of the
+    app silently kills every clone link ever handed out -- the generated pages
+    are still on disk, but the URL in the UI answers "site can't be reached"
+    (hit live: job_005's clone on :54513 after a server restart). Rebinding is
+    cheap and deterministic, so do it on read instead of making the user re-run
+    a multi-minute, LLM-billed rebuild just to get the files served again.
+
+    The new port differs from the old one, so every recorded URL is rewritten.
+    """
+    if not isinstance(result, dict) or not result.get("clone_url"):
+        return result
+    if _port_alive(result.get("clone_port")):
+        return result
+    preview = Path("/tmp/codeintel_pixel_agent") / jid / "preview"
+    if not preview.is_dir() or not any(preview.glob("*.html")):
+        return result
+    try:
+        port = _serve_clone(jid, str(preview))
+    except Exception:
+        return result
+    old = result.get("clone_port")
+    page = str(result["clone_url"]).rsplit("/", 1)[-1] or "index.html"
+    out = {**result, "clone_port": port, "clone_url": f"http://localhost:{port}/{page}"}
+    if isinstance(result.get("pages"), list):
+        out["pages"] = [{**p, "clone_page_url": f"http://localhost:{port}/{p['name']}.html"}
+                        if isinstance(p, dict) and p.get("name") else p
+                        for p in result["pages"]]
+    out["clone_reserved_from"] = old
+    return out
 
 
 def _rewrite_asset_urls(code: str, origin: str) -> str:
